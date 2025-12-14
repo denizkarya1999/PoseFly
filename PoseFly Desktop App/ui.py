@@ -1,7 +1,11 @@
 # ui.py
+import ctypes
+import os
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 import cv2
+
+ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("posefly.app.v1")
 
 class PipelineUI(tk.Tk):
     """
