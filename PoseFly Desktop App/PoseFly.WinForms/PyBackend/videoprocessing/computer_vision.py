@@ -1,4 +1,4 @@
-# computer_vision.py
+﻿# computer_vision.py
 import time
 import cv2
 
@@ -185,7 +185,7 @@ class ComputerVision:
             if toggles.get("angle", True):
                 crop = self._draw_list_boxes_on_crop(crop, angle_out, "Angle", (0, 255, 0))
             if toggles.get("distance", True):
-                crop = self._draw_list_boxes_on_crop(crop, dist_out, "Distance", (255, 0, 0))
+                crop = self._draw_list_boxes_on_crop(crop, dist_out, "Distance", (255, 200, 100))
             if toggles.get("led", True):
                 crop = self._draw_list_boxes_on_crop(crop, led_out, "LED", (0, 0, 255))
 

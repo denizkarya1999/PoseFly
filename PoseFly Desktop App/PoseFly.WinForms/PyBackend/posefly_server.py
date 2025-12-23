@@ -1,4 +1,3 @@
-# posefly_server.py
 import base64
 import json
 import socket
@@ -6,11 +5,10 @@ import threading
 import time
 import cv2
 
-from backend import PipelineBackend  # your backend.py
+from backend import PipelineBackend
 
 HOST = "127.0.0.1"
 PORT = 8765
-
 
 class PoseFlyServer:
     def __init__(self):
@@ -21,13 +19,17 @@ class PoseFlyServer:
         self.running = False
         self.thread = None
 
-        # Runtime settings (can be updated via UPDATE)
+        # Runtime settings
         self.camera_index = 0
         self.use_dshow = True
         self.fps = 10.0
         self.output_path = "results/full_pipeline_results/posefly_results2.mp4"
         self.save_video = True
         self.toggles = {"drone": True, "angle": True, "distance": True, "led": True}
+
+        # Rolling shutter controls
+        self.iso = 100
+        self.shutter_hz = 1000.0
 
     def _send_line(self, line: str):
         with self.client_lock:
@@ -36,14 +38,47 @@ class PoseFlyServer:
             try:
                 self.client_sock.sendall((line + "\n").encode("utf-8"))
             except Exception:
-                # client disconnected
                 self.client_sock = None
 
+    def apply_update(self, payload: dict):
+        if "camera_index" in payload:
+            self.camera_index = int(payload["camera_index"])
+        if "use_dshow" in payload:
+            self.use_dshow = bool(payload["use_dshow"])
+        if "fps" in payload:
+            self.fps = float(payload["fps"])
+        if "output_path" in payload:
+            self.output_path = str(payload["output_path"])
+        if "save_video" in payload:
+            self.save_video = bool(payload["save_video"])
+
+        if "toggles" in payload:
+            t = payload["toggles"] or {}
+            self.toggles = {
+                "drone": bool(t.get("drone", True)),
+                "angle": bool(t.get("angle", True)),
+                "distance": bool(t.get("distance", True)),
+                "led": bool(t.get("led", True)),
+            }
+
+        if "iso" in payload:
+            self.iso = int(payload["iso"])
+        if "shutter_hz" in payload:
+            self.shutter_hz = float(payload["shutter_hz"])
+
+        # Apply immediately if camera is open
+        try:
+            self.backend.set_rollingshutter(self.iso, self.shutter_hz)
+        except Exception:
+            pass
+
+        self._send_line("STATUS UPDATED")
+
     def _capture_loop(self):
-        # open camera once per START
         try:
             self.backend.open_camera(camera_index=self.camera_index, use_dshow=self.use_dshow)
             self.backend.apply_camera_settings_led_id()
+            self.backend.set_rollingshutter(self.iso, self.shutter_hz)
         except Exception as e:
             self._send_line(f"STATUS ERROR {e}")
             self.running = False
@@ -61,16 +96,13 @@ class PoseFlyServer:
                     self._send_line("STATUS ERROR Failed to read frame")
                     break
 
-                # CV processing
                 frame = self.backend.process_frame(frame, self.toggles)
 
-                # Stream frame to client (JPEG -> base64)
                 ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
                 if ok:
                     b64 = base64.b64encode(buf.tobytes()).decode("ascii")
                     self._send_line("FRAME " + b64)
 
-                # Optional writer
                 try:
                     self.backend.write_frame_if_enabled(frame, self.save_video, self.output_path, self.fps)
                 except Exception as e:
@@ -85,13 +117,11 @@ class PoseFlyServer:
                 self._send_line(f"STATUS ERROR {e}")
                 break
 
-            # FPS pacing
             elapsed = time.time() - t0
             sleep_for = max(0.0, target_dt - elapsed)
             if sleep_for > 0:
                 time.sleep(sleep_for)
 
-        # cleanup
         self.running = False
         try:
             self.backend.release_writer()
@@ -114,36 +144,12 @@ class PoseFlyServer:
     def stop_pipeline(self):
         self.running = False
 
-    def apply_update(self, payload: dict):
-        # update settings safely mid-run
-        if "camera_index" in payload:
-            self.camera_index = int(payload["camera_index"])
-        if "use_dshow" in payload:
-            self.use_dshow = bool(payload["use_dshow"])
-        if "fps" in payload:
-            self.fps = float(payload["fps"])
-        if "output_path" in payload:
-            self.output_path = str(payload["output_path"])
-        if "save_video" in payload:
-            self.save_video = bool(payload["save_video"])
-        if "toggles" in payload:
-            t = payload["toggles"] or {}
-            self.toggles = {
-                "drone": bool(t.get("drone", True)),
-                "angle": bool(t.get("angle", True)),
-                "distance": bool(t.get("distance", True)),
-                "led": bool(t.get("led", True)),
-            }
-
-        self._send_line("STATUS UPDATED")
-
     def handle_client(self, sock: socket.socket):
         with self.client_lock:
             self.client_sock = sock
 
         self._send_line("STATUS CONNECTED")
 
-        # read JSON lines
         f = sock.makefile("r", encoding="utf-8", newline="\n")
         try:
             for line in f:
@@ -171,12 +177,8 @@ class PoseFlyServer:
                 else:
                     self._send_line(f"STATUS ERROR Unknown cmd: {cmd}")
 
-        # ✅ IMPORTANT CHANGE:
-        # Don't crash the whole server when a client disconnects abruptly (WinError 10054 is common).
         except (ConnectionResetError, BrokenPipeError, OSError):
-            # client disconnected abruptly; treat as normal disconnect
             pass
-
         finally:
             self.stop_pipeline()
             with self.client_lock:
@@ -189,7 +191,6 @@ class PoseFlyServer:
 
 def main():
     server = PoseFlyServer()
-
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind((HOST, PORT))
@@ -202,8 +203,6 @@ def main():
             try:
                 server.handle_client(client)
             except Exception as e:
-                # ✅ IMPORTANT CHANGE:
-                # Never let a single client/session crash the whole server loop.
                 print("Client handler error:", repr(e))
             print("Client disconnected:", addr)
 

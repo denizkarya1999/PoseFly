@@ -20,8 +20,15 @@
         private System.Windows.Forms.CheckBox chkSave;
         private System.Windows.Forms.Label lblCameraIndex;
         private System.Windows.Forms.NumericUpDown numCamera;
+
         private System.Windows.Forms.Label lblFps;
         private System.Windows.Forms.TextBox txtFps;
+
+        // ✅ Rolling shutter controls
+        private System.Windows.Forms.Label lblIso;
+        private System.Windows.Forms.NumericUpDown numIso;
+        private System.Windows.Forms.Label lblShutterHz;
+        private System.Windows.Forms.NumericUpDown numShutterHz;
 
         private System.Windows.Forms.Label lblOutputPath;
         private System.Windows.Forms.TextBox txtOutput;
@@ -65,6 +72,13 @@
             numCamera = new NumericUpDown();
             lblFps = new Label();
             txtFps = new TextBox();
+
+            // ✅ rolling shutter init
+            lblIso = new Label();
+            numIso = new NumericUpDown();
+            lblShutterHz = new Label();
+            numShutterHz = new NumericUpDown();
+
             lblOutputPath = new Label();
             txtOutput = new TextBox();
             btnBrowse = new Button();
@@ -76,17 +90,24 @@
             lblStatus = new Label();
             grpLiveView = new GroupBox();
             pic = new PictureBox();
+
             root.SuspendLayout();
             grpInference.SuspendLayout();
             flowInference.SuspendLayout();
             grpSettings.SuspendLayout();
             gridSettings.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)numCamera).BeginInit();
+
+            // ✅ BeginInit for new numeric controls
+            ((System.ComponentModel.ISupportInitialize)numIso).BeginInit();
+            ((System.ComponentModel.ISupportInitialize)numShutterHz).BeginInit();
+
             grpControls.SuspendLayout();
             flowControls.SuspendLayout();
             grpLiveView.SuspendLayout();
             ((System.ComponentModel.ISupportInitialize)pic).BeginInit();
             SuspendLayout();
+
             // 
             // root
             // 
@@ -107,6 +128,7 @@
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
             root.Size = new Size(920, 820);
             root.TabIndex = 0;
+
             // 
             // grpInference
             // 
@@ -118,6 +140,7 @@
             grpInference.TabIndex = 0;
             grpInference.TabStop = false;
             grpInference.Text = "Inference";
+
             // 
             // flowInference
             // 
@@ -132,6 +155,7 @@
             flowInference.Size = new Size(884, 98);
             flowInference.TabIndex = 0;
             flowInference.WrapContents = false;
+
             // 
             // chkDrone
             // 
@@ -143,6 +167,7 @@
             chkDrone.Size = new Size(112, 19);
             chkDrone.TabIndex = 0;
             chkDrone.Text = "Drone Detection";
+
             // 
             // chkAngle
             // 
@@ -154,6 +179,7 @@
             chkAngle.Size = new Size(109, 19);
             chkAngle.TabIndex = 1;
             chkAngle.Text = "Angle Inference";
+
             // 
             // chkDistance
             // 
@@ -165,6 +191,7 @@
             chkDistance.Size = new Size(123, 19);
             chkDistance.TabIndex = 2;
             chkDistance.Text = "Distance Inference";
+
             // 
             // chkLed
             // 
@@ -176,6 +203,7 @@
             chkLed.Size = new Size(112, 19);
             chkLed.TabIndex = 3;
             chkLed.Text = "LED ID Inference";
+
             // 
             // grpSettings
             // 
@@ -183,10 +211,11 @@
             grpSettings.Dock = DockStyle.Top;
             grpSettings.Location = new Point(15, 141);
             grpSettings.Name = "grpSettings";
-            grpSettings.Size = new Size(890, 160);
+            grpSettings.Size = new Size(890, 190); // ✅ slightly taller for extra row
             grpSettings.TabIndex = 1;
             grpSettings.TabStop = false;
             grpSettings.Text = "Settings";
+
             // 
             // gridSettings
             // 
@@ -196,23 +225,38 @@
             gridSettings.ColumnStyles.Add(new ColumnStyle());
             gridSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
             gridSettings.ColumnStyles.Add(new ColumnStyle());
+
             gridSettings.Controls.Add(chkSave, 0, 0);
+
             gridSettings.Controls.Add(lblCameraIndex, 0, 1);
             gridSettings.Controls.Add(numCamera, 1, 1);
             gridSettings.Controls.Add(lblFps, 2, 1);
             gridSettings.Controls.Add(txtFps, 3, 1);
-            gridSettings.Controls.Add(lblOutputPath, 0, 2);
-            gridSettings.Controls.Add(txtOutput, 1, 2);
-            gridSettings.Controls.Add(btnBrowse, 4, 2);
+
+            // ✅ new row for ISO / Shutter Hz
+            gridSettings.Controls.Add(lblIso, 0, 2);
+            gridSettings.Controls.Add(numIso, 1, 2);
+            gridSettings.Controls.Add(lblShutterHz, 2, 2);
+            gridSettings.Controls.Add(numShutterHz, 3, 2);
+
+            gridSettings.Controls.Add(lblOutputPath, 0, 3);
+            gridSettings.Controls.Add(txtOutput, 1, 3);
+            gridSettings.Controls.Add(btnBrowse, 4, 3);
+
             gridSettings.Dock = DockStyle.Fill;
             gridSettings.Location = new Point(3, 19);
             gridSettings.Name = "gridSettings";
-            gridSettings.RowCount = 3;
+
+            // ✅ was 3, now 4
+            gridSettings.RowCount = 4;
             gridSettings.RowStyles.Add(new RowStyle());
             gridSettings.RowStyles.Add(new RowStyle());
             gridSettings.RowStyles.Add(new RowStyle());
-            gridSettings.Size = new Size(884, 138);
+            gridSettings.RowStyles.Add(new RowStyle());
+
+            gridSettings.Size = new Size(884, 168);
             gridSettings.TabIndex = 0;
+
             // 
             // chkSave
             // 
@@ -224,6 +268,7 @@
             chkSave.Size = new Size(83, 19);
             chkSave.TabIndex = 0;
             chkSave.Text = "Save Video";
+
             // 
             // lblCameraIndex
             // 
@@ -234,6 +279,7 @@
             lblCameraIndex.Size = new Size(82, 23);
             lblCameraIndex.TabIndex = 1;
             lblCameraIndex.Text = "Camera Index:";
+
             // 
             // numCamera
             // 
@@ -242,6 +288,7 @@
             numCamera.Name = "numCamera";
             numCamera.Size = new Size(80, 23);
             numCamera.TabIndex = 2;
+
             // 
             // lblFps
             // 
@@ -252,6 +299,7 @@
             lblFps.Size = new Size(29, 23);
             lblFps.TabIndex = 3;
             lblFps.Text = "FPS:";
+
             // 
             // txtFps
             // 
@@ -260,46 +308,97 @@
             txtFps.Size = new Size(80, 23);
             txtFps.TabIndex = 4;
             txtFps.Text = "10.0";
+
+            // 
+            // lblIso
+            // 
+            lblIso.AutoSize = true;
+            lblIso.Location = new Point(3, 54);
+            lblIso.Name = "lblIso";
+            lblIso.Padding = new Padding(0, 8, 0, 0);
+            lblIso.Size = new Size(27, 23);
+            lblIso.TabIndex = 5;
+            lblIso.Text = "ISO:";
+
+            // 
+            // numIso
+            // 
+            numIso.Location = new Point(92, 57);
+            numIso.Minimum = new decimal(new int[] { 50, 0, 0, 0 });
+            numIso.Maximum = new decimal(new int[] { 6400, 0, 0, 0 });
+            numIso.Increment = new decimal(new int[] { 50, 0, 0, 0 });
+            numIso.Name = "numIso";
+            numIso.Size = new Size(80, 23);
+            numIso.TabIndex = 6;
+            numIso.Value = new decimal(new int[] { 100, 0, 0, 0 });
+
+            // 
+            // lblShutterHz
+            // 
+            lblShutterHz.AutoSize = true;
+            lblShutterHz.Location = new Point(178, 54);
+            lblShutterHz.Name = "lblShutterHz";
+            lblShutterHz.Padding = new Padding(0, 8, 0, 0);
+            lblShutterHz.Size = new Size(69, 23);
+            lblShutterHz.TabIndex = 7;
+            lblShutterHz.Text = "Shutter Hz:";
+
+            // 
+            // numShutterHz
+            // 
+            numShutterHz.Location = new Point(253, 57);
+            numShutterHz.Minimum = new decimal(new int[] { 5, 0, 0, 0 });
+            numShutterHz.Maximum = new decimal(new int[] { 6000, 0, 0, 0 });
+            numShutterHz.Increment = new decimal(new int[] { 5, 0, 0, 0 });
+            numShutterHz.Name = "numShutterHz";
+            numShutterHz.Size = new Size(90, 23);
+            numShutterHz.TabIndex = 8;
+            numShutterHz.Value = new decimal(new int[] { 1000, 0, 0, 0 });
+
             // 
             // lblOutputPath
             // 
             lblOutputPath.AutoSize = true;
-            lblOutputPath.Location = new Point(3, 54);
+            lblOutputPath.Location = new Point(3, 83);
             lblOutputPath.Name = "lblOutputPath";
             lblOutputPath.Padding = new Padding(0, 8, 0, 0);
             lblOutputPath.Size = new Size(75, 23);
-            lblOutputPath.TabIndex = 5;
+            lblOutputPath.TabIndex = 9;
             lblOutputPath.Text = "Output Path:";
+
             // 
             // txtOutput
             // 
             txtOutput.Anchor = AnchorStyles.Left | AnchorStyles.Right;
             gridSettings.SetColumnSpan(txtOutput, 3);
-            txtOutput.Location = new Point(92, 84);
+            txtOutput.Location = new Point(92, 86);
             txtOutput.Name = "txtOutput";
             txtOutput.Size = new Size(693, 23);
-            txtOutput.TabIndex = 6;
+            txtOutput.TabIndex = 10;
             txtOutput.Text = "results\\full_pipeline_results\\posefly_results2.mp4";
+
             // 
             // btnBrowse
             // 
-            btnBrowse.Location = new Point(791, 57);
+            btnBrowse.Location = new Point(791, 86);
             btnBrowse.Name = "btnBrowse";
             btnBrowse.Size = new Size(90, 23);
-            btnBrowse.TabIndex = 7;
+            btnBrowse.TabIndex = 11;
             btnBrowse.Text = "Browse";
             btnBrowse.Click += BtnBrowse_Click;
+
             // 
             // grpControls
             // 
             grpControls.Controls.Add(flowControls);
             grpControls.Dock = DockStyle.Top;
-            grpControls.Location = new Point(15, 307);
+            grpControls.Location = new Point(15, 337);
             grpControls.Name = "grpControls";
             grpControls.Size = new Size(890, 90);
             grpControls.TabIndex = 2;
             grpControls.TabStop = false;
             grpControls.Text = "Controls";
+
             // 
             // flowControls
             // 
@@ -313,6 +412,7 @@
             flowControls.Size = new Size(884, 68);
             flowControls.TabIndex = 0;
             flowControls.WrapContents = false;
+
             // 
             // btnStart
             // 
@@ -322,6 +422,7 @@
             btnStart.TabIndex = 0;
             btnStart.Text = "Start";
             btnStart.Click += BtnStart_Click;
+
             // 
             // btnStop
             // 
@@ -331,6 +432,7 @@
             btnStop.TabIndex = 1;
             btnStop.Text = "Stop";
             btnStop.Click += BtnStop_Click;
+
             // 
             // btnQuit
             // 
@@ -340,6 +442,7 @@
             btnQuit.TabIndex = 2;
             btnQuit.Text = "Quit";
             btnQuit.Click += BtnQuit_Click;
+
             // 
             // lblStatus
             // 
@@ -350,17 +453,19 @@
             lblStatus.Size = new Size(74, 25);
             lblStatus.TabIndex = 3;
             lblStatus.Text = "Status: Idle";
+
             // 
             // grpLiveView
             // 
             grpLiveView.Controls.Add(pic);
             grpLiveView.Dock = DockStyle.Fill;
-            grpLiveView.Location = new Point(15, 403);
+            grpLiveView.Location = new Point(15, 433);
             grpLiveView.Name = "grpLiveView";
-            grpLiveView.Size = new Size(890, 402);
+            grpLiveView.Size = new Size(890, 372);
             grpLiveView.TabIndex = 3;
             grpLiveView.TabStop = false;
             grpLiveView.Text = "Live View";
+
             // 
             // pic
             // 
@@ -368,10 +473,11 @@
             pic.Dock = DockStyle.Fill;
             pic.Location = new Point(3, 19);
             pic.Name = "pic";
-            pic.Size = new Size(884, 380);
+            pic.Size = new Size(884, 350);
             pic.SizeMode = PictureBoxSizeMode.Zoom;
             pic.TabIndex = 0;
             pic.TabStop = false;
+
             // 
             // Form1
             // 
@@ -385,6 +491,7 @@
             StartPosition = FormStartPosition.CenterScreen;
             Text = "PoseFly - AI-enhanced Drone-to-Drone Communication System";
             FormClosing += Form1_FormClosing;
+
             root.ResumeLayout(false);
             grpInference.ResumeLayout(false);
             flowInference.ResumeLayout(false);
@@ -392,7 +499,11 @@
             grpSettings.ResumeLayout(false);
             gridSettings.ResumeLayout(false);
             gridSettings.PerformLayout();
+
             ((System.ComponentModel.ISupportInitialize)numCamera).EndInit();
+            ((System.ComponentModel.ISupportInitialize)numIso).EndInit();
+            ((System.ComponentModel.ISupportInitialize)numShutterHz).EndInit();
+
             grpControls.ResumeLayout(false);
             flowControls.ResumeLayout(false);
             flowControls.PerformLayout();

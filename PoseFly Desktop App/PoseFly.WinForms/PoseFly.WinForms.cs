@@ -36,14 +36,16 @@ namespace PoseFly.WinForms
             btnStop.Click += BtnStop_Click;
             btnQuit.Click += BtnQuit_Click;
             this.FormClosing += Form1_FormClosing;
+
+            // Optional: live updates while running (safe even if not connected yet)
+            numIso.ValueChanged += async (_, __) => await SendRollingUpdateAsync();
+            numShutterHz.ValueChanged += async (_, __) => await SendRollingUpdateAsync();
         }
 
         // --------- Event Handlers ---------
 
         private void BtnBrowse_Click(object? sender, EventArgs e) => BrowseOutput();
-
         private async void BtnStart_Click(object? sender, EventArgs e) => await StartAsync();
-
         private async void BtnStop_Click(object? sender, EventArgs e) => await StopAsync();
 
         private async void BtnQuit_Click(object? sender, EventArgs e)
@@ -71,14 +73,13 @@ namespace PoseFly.WinForms
             if (!File.Exists(script))
                 throw new FileNotFoundException("Missing script:\n" + script);
 
-            // Start the REAL cmd.exe process (so Kill works)
             var psi = new ProcessStartInfo
             {
                 FileName = "cmd.exe",
                 Arguments = "/k python posefly_server.py",
                 WorkingDirectory = pyDir,
-                UseShellExecute = false,    // ✅ critical
-                CreateNoWindow = false      // ✅ show terminal window
+                UseShellExecute = false,
+                CreateNoWindow = false
             };
 
             _serverTerminal = new Process();
@@ -151,6 +152,11 @@ namespace PoseFly.WinForms
                 fps = GetFpsSafe(),
                 output_path = txtOutput.Text.Trim(),
                 save_video = chkSave.Checked,
+
+                // Rolling shutter controls
+                iso = (int)numIso.Value,
+                shutter_hz = (double)numShutterHz.Value,
+
                 toggles = new
                 {
                     drone = chkDrone.Checked,
@@ -185,14 +191,34 @@ namespace PoseFly.WinForms
             await _stream.WriteAsync(bytes, 0, bytes.Length);
         }
 
+        private async Task SendRollingUpdateAsync()
+        {
+            // only send if connected
+            if (_client == null || _stream == null) return;
+
+            try
+            {
+                await SendJsonAsync(new
+                {
+                    cmd = "UPDATE",
+                    payload = new
+                    {
+                        iso = (int)numIso.Value,
+                        shutter_hz = (double)numShutterHz.Value
+                    }
+                });
+            }
+            catch
+            {
+                // ignore update errors (stopping, disconnect, etc.)
+            }
+        }
+
         private async Task StartAsync()
         {
             try
             {
-                // Start server terminal once
                 StartServerInTerminal();
-
-                // Wait until the port is LISTENING (no fake connect/disconnect)
                 await WaitForServerAsync(10000);
 
                 await ConnectAsync();
@@ -221,44 +247,31 @@ namespace PoseFly.WinForms
                 catch { }
 
                 // 2) Stop reader loop
-                try
-                {
-                    if (_cts != null)
-                        _cts.Cancel();
-                }
-                catch { }
+                try { _cts?.Cancel(); } catch { }
 
                 // 3) Wait for reader to finish
-                try
-                {
-                    if (_readerTask != null)
-                        await _readerTask;
-                }
-                catch { }
+                try { if (_readerTask != null) await _readerTask; } catch { }
 
                 // 4) Close network resources
-                try { if (_stream != null) _stream.Close(); } catch { }
-                try { if (_client != null) _client.Close(); } catch { }
+                try { _stream?.Close(); } catch { }
+                try { _client?.Close(); } catch { }
 
                 _stream = null;
                 _client = null;
 
-                try { if (_cts != null) _cts.Dispose(); } catch { }
+                try { _cts?.Dispose(); } catch { }
                 _cts = null;
                 _readerTask = null;
 
-                // ✅ Clear live view (PictureBox)
+                // Clear live view (PictureBox)
                 try
                 {
-                    if (pic != null)
+                    BeginInvoke(new Action(() =>
                     {
-                        this.BeginInvoke(new Action(() =>
-                        {
-                            var old = pic.Image;
-                            pic.Image = null;
-                            if (old != null) old.Dispose();
-                        }));
-                    }
+                        var old = pic.Image;
+                        pic.Image = null;
+                        old?.Dispose();
+                    }));
                 }
                 catch { }
 
@@ -270,12 +283,7 @@ namespace PoseFly.WinForms
                 }
                 catch
                 {
-                    try
-                    {
-                        if (_serverTerminal != null && !_serverTerminal.HasExited)
-                            _serverTerminal.Kill();
-                    }
-                    catch { }
+                    try { _serverTerminal?.Kill(); } catch { }
                 }
 
                 _serverTerminal = null;

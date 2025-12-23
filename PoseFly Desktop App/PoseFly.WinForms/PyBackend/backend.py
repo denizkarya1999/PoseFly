@@ -1,4 +1,3 @@
-# backend.py
 from camera.camera import Camera
 from videoprocessing.computer_vision import ComputerVision
 
@@ -13,7 +12,11 @@ class PipelineBackend:
         self.camera.open(*args, **kwargs)
 
     def apply_camera_settings_led_id(self):
+        # server calls this; keep compatibility
         self.camera.apply_led_settings()
+
+    def set_rollingshutter(self, iso: int, shutter_hz: float):
+        self.camera.rollingshutter(iso, shutter_hz)
 
     def read_frame(self):
         return self.camera.read()

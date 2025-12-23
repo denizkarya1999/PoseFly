@@ -1,6 +1,7 @@
 # camera.py
 import os
 import cv2
+import math
 
 
 class Camera:
@@ -8,6 +9,10 @@ class Camera:
         self.cap = None
         self.w = None
         self.h = None
+
+        # ---- Rolling shutter / ISO state ----
+        self.iso = 100
+        self.shutter_hz = 1000.0
 
         self.out = None
         self.fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -32,13 +37,54 @@ class Camera:
         self.w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
+        # Apply last-known settings on open
+        self._apply_rollingshutter()
+
     def apply_led_settings(self):
+        """
+        Backwards-compatible function.
+        Your backend/server calls this during START.
+        We'll just apply the current rollingshutter state.
+        """
         if self.cap is None:
             raise RuntimeError("Camera not opened.")
-        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0)
-        self.cap.set(cv2.CAP_PROP_EXPOSURE, -5)
-        self.cap.set(cv2.CAP_PROP_GAIN, 20)
-        self.cap.set(cv2.CAP_PROP_BRIGHTNESS, 150)
+        self._apply_rollingshutter()
+
+    def rollingshutter(self, iso: int, shutter_hz: float):
+        """
+        Set ISO-like + shutter rate (Hz) and apply.
+        """
+        self.iso = int(max(50, min(6400, iso)))
+        self.shutter_hz = float(max(5.0, min(6000.0, shutter_hz)))
+        self._apply_rollingshutter()
+
+    def _apply_rollingshutter(self):
+        """
+        Apply stored ISO + shutter_hz to the camera.
+        Note: webcams don't expose true rolling-shutter readout timing;
+              this maps to exposure/gain/brightness as a practical control.
+        """
+        if self.cap is None:
+            return
+
+        # Prefer manual exposure (DirectShow convention: ~0.75 manual)
+        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
+
+        # ISO -> gain (log mapping)
+        t_iso = (math.log(self.iso) - math.log(50)) / (math.log(6400) - math.log(50))
+        t_iso = max(0.0, min(1.0, t_iso))
+        gain = 2.0 + t_iso * 18.0  # ~2..20
+        self.cap.set(cv2.CAP_PROP_GAIN, float(gain))
+
+        # shutter_hz -> exposure (higher Hz => shorter exposure => darker)
+        t_sh = (math.log(self.shutter_hz) - math.log(5.0)) / (math.log(6000.0) - math.log(5.0))
+        t_sh = max(0.0, min(1.0, t_sh))
+        exposure = -10.0 + (1.0 - t_sh) * 6.0  # ~[-10..-4]
+        self.cap.set(cv2.CAP_PROP_EXPOSURE, float(exposure))
+
+        # brightness compensation
+        brightness = 95.0 + (1.0 - t_sh) * 15.0
+        self.cap.set(cv2.CAP_PROP_BRIGHTNESS, float(brightness))
 
     def read(self):
         if self.cap is None:

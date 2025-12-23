@@ -1,7 +1,7 @@
-from pathlib import Path
+﻿from pathlib import Path
 from ultralytics import YOLO
 
-ANGLE_LABELS = ["0_360°", "45°", "90°", "135°", "180°", "225°", "270°", "315°"]
+ANGLE_LABELS = ["0_360", "45", "90", "135", "180", "225", "270", "315"]
 
 class AngleDetector:
     def __init__(self, model_path="models/Posefly_Angle.pt"):

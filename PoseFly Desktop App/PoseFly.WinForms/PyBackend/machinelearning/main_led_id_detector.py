@@ -1,4 +1,4 @@
-from pathlib import Path
+﻿from pathlib import Path
 from ultralytics import YOLO
 
 LED_LABELS = ["0001", "0101", "1110", "1001"]
