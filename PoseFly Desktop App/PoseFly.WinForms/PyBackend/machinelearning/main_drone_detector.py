@@ -7,5 +7,6 @@ class DroneDetector:
         self.model = YOLO(model_path)
 
     def detect(self, frame):
-        results = self.model(frame)[0]
+        # Detection model -> Results with .boxes
+        results = self.model(frame, verbose=False)[0]
         return results

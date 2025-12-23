@@ -8,15 +8,21 @@ class AngleDetector:
         model_path = Path(__file__).parent / model_path
         self.model = YOLO(model_path)
 
-    def detect(self, frame):
-        results = self.model(frame)[0]
-        angle_data = []
+    def detect(self, frame, conf=0.001, iou=0.7):
+        """
+        Detection-style model:
+        - Use very low conf so we usually get at least 1 box
+        - Return top-1 prediction as [(coords, label, conf)]
+        """
+        r = self.model.predict(frame, verbose=False, conf=conf, iou=iou, max_det=1)[0]
 
-        for box in results.boxes:
-            cls = int(box.cls[0])
-            conf = float(box.conf[0])
-            angle_label = ANGLE_LABELS[cls]
-            coords = box.xyxy[0].cpu().numpy()
-            angle_data.append((coords, angle_label, conf))
+        if r.boxes is None or len(r.boxes) == 0:
+            return []
 
-        return angle_data
+        b = r.boxes[0]
+        cls = int(b.cls[0])
+        c = float(b.conf[0])
+        coords = b.xyxy[0].cpu().numpy()
+
+        label = ANGLE_LABELS[cls] if 0 <= cls < len(ANGLE_LABELS) else str(cls)
+        return [(coords, label, c)]
