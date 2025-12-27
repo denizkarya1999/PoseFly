@@ -19,7 +19,7 @@ In this implementation, we run a **webcam inference pipeline** that can optional
 - 💡 **LED ID / Optical Label ID**
 - 🎞️ **Optional video saving**
 
-The original PoseFly paper reports strong prototype results (e.g., near 100% distance estimation accuracy up to 20 m, identification up to 12 m, angle/speed within 4 m, and ~5 Kbps quick-link throughput on prototypes). :contentReference[oaicite:2]{index=2}
+The original PoseFly paper reports strong prototype results (e.g., near 100% distance estimation accuracy up to 20 m, identification up to 12 m, angle/speed within 4 m, and ~5 Kbps quick-link throughput on prototypes).
 
 ---
 
