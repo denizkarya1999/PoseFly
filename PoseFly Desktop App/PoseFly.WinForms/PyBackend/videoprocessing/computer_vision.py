@@ -7,7 +7,6 @@ from machinelearning.main_angle_detector import AngleDetector
 from machinelearning.main_distance_detector import DistanceDetector
 from machinelearning.main_led_id_detector import LEDDetector
 
-
 class ComputerVision:
     def __init__(self):
         self.drone = DroneDetector()
