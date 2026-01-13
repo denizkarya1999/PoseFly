@@ -6,6 +6,8 @@ from machinelearning.main_drone_detector import DroneDetector
 from machinelearning.main_angle_detector import AngleDetector
 from machinelearning.main_distance_detector import DistanceDetector
 from machinelearning.main_led_id_detector import LEDDetector
+from machinelearning.main_speed_detector import SpeedDetector
+
 
 class ComputerVision:
     def __init__(self):
@@ -13,6 +15,7 @@ class ComputerVision:
         self.angle = AngleDetector()
         self.distance = DistanceDetector()
         self.led = LEDDetector()
+        self.speed = SpeedDetector()  # expects 640x640 input
 
         # Logging control
         self._last_log_t = 0.0
@@ -30,6 +33,12 @@ class ComputerVision:
             self._last_log_t = now
             return True
         return False
+
+    # ---------- Preprocess helpers ----------
+
+    @staticmethod
+    def _resize_640(bgr):
+        return cv2.resize(bgr, (640, 640), interpolation=cv2.INTER_LINEAR)
 
     # ---------- Unified extraction for iteration logging ----------
 
@@ -59,7 +68,7 @@ class ComputerVision:
             if isinstance(names, dict) and cls_id in names:
                 lbl = names[cls_id]
             items.append((lbl, conf))
-        return items
+        return items if items else None
 
     def _collect_items(self, out):
         items = self._items_from_list(out)
@@ -79,7 +88,15 @@ class ComputerVision:
             parts.append(f"+{len(items_sorted) - len(shown)} more")
         return "(" + ", ".join(parts) + ")"
 
-    def _print_iteration_line(self, drone_out=None, angle_out=None, dist_out=None, led_out=None):
+    def _best_item(self, out):
+        """Return (label, conf) for the single best prediction, or (None, None)."""
+        items = self._collect_items(out)
+        if not items:
+            return None, None
+        lbl, conf = max(items, key=lambda x: x[1])
+        return str(lbl), float(conf)
+
+    def _print_iteration_line(self, drone_out=None, angle_out=None, dist_out=None, led_out=None, speed_out=None):
         self._iter += 1
         pieces = [f"Iteration-{self._iter}:"]
 
@@ -91,45 +108,66 @@ class ComputerVision:
             pieces.append(f"DISTANCE {self._top_k_str(dist_out)}")
         if led_out is not None:
             pieces.append(f"LED {self._top_k_str(led_out)}")
+        if speed_out is not None:
+            pieces.append(f"SPEED {self._top_k_str(speed_out)}")
 
         print(", ".join(pieces))
 
-    # ---------- Drawing helper for sub-model boxes on the crop ----------
+    # ---------- Header label (top overlay) ----------
 
     @staticmethod
-    def _draw_list_boxes_on_crop(crop_bgr, out_list, title, color_bgr):
-        """
-        out_list: [(coords_xyxy, label, conf), ...] where coords are relative to this crop.
-        Draws boxes + label + conf on crop and returns it.
-        """
-        if not isinstance(out_list, list) or len(out_list) == 0:
-            return crop_bgr
+    def _wrap_by_pipe(text: str, max_chars: int):
+        tokens = text.split(" | ")
+        lines = []
+        cur = ""
+        for t in tokens:
+            if not cur:
+                cur = t
+            elif len(cur) + 3 + len(t) <= max_chars:
+                cur += " | " + t
+            else:
+                lines.append(cur)
+                cur = t
+        if cur:
+            lines.append(cur)
+        return lines
 
-        h, w = crop_bgr.shape[:2]
-        for coords, lbl, conf in out_list:
-            try:
-                x1, y1, x2, y2 = coords
-            except Exception:
-                continue
+    @staticmethod
+    def _draw_header_on_frame(frame_bgr, x1, y1, x2, header_text):
+        H, W = frame_bgr.shape[:2]
+        x1 = max(0, min(int(x1), W - 1))
+        x2 = max(0, min(int(x2), W - 1))
+        y1 = max(0, min(int(y1), H - 1))
+        box_w = max(1, x2 - x1)
 
-            x1, y1, x2, y2 = int(x1), int(y1), int(x2), int(y2)
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.55
+        thickness = 2
 
-            # clamp to crop bounds
-            x1 = max(0, min(x1, w - 1))
-            x2 = max(0, min(x2, w - 1))
-            y1 = max(0, min(y1, h - 1))
-            y2 = max(0, min(y2, h - 1))
-            if x2 <= x1 or y2 <= y1:
-                continue
+        max_chars = max(20, int(box_w / 10))
+        lines = ComputerVision._wrap_by_pipe(header_text, max_chars=max_chars)
+        lines = lines[:2]  # max 2 lines
 
-            cv2.rectangle(crop_bgr, (x1, y1), (x2, y2), color_bgr, 2)
-            text = f"{title}: {lbl} ({float(conf):.2f})"
-            cv2.putText(
-                crop_bgr, text, (x1, max(0, y1 - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.6, color_bgr, 2
-            )
+        line_h = 0
+        for ln in lines:
+            (_, th), _ = cv2.getTextSize(ln, font, font_scale, thickness)
+            line_h = max(line_h, th)
+        pad_y = 6
+        strip_h = (line_h + pad_y) * len(lines) + pad_y
 
-        return crop_bgr
+        y_top = y1 - strip_h - 2
+        if y_top < 0:
+            y_top = y1 + 2  # inside box
+        y_bottom = min(H - 1, y_top + strip_h)
+
+        cv2.rectangle(frame_bgr, (x1, y_top), (x2, y_bottom), (0, 0, 0), -1)
+
+        y_text = y_top + pad_y + line_h
+        for ln in lines:
+            cv2.putText(frame_bgr, ln, (x1 + 6, y_text), font, font_scale, (255, 255, 255), thickness)
+            y_text += (line_h + pad_y)
+
+        return frame_bgr
 
     # ---------- Main pipeline ----------
 
@@ -152,6 +190,7 @@ class ComputerVision:
                 angle_out = self.angle.detect(frame) if toggles.get("angle", True) else None
                 dist_out  = self.distance.detect(frame) if toggles.get("distance", True) else None
                 led_out   = self.led.detect(frame) if toggles.get("led", True) else None
+                speed_out = self.speed.detect(self._resize_640(frame)) if toggles.get("speed", True) else None
 
                 if do_log:
                     self._print_iteration_line(
@@ -159,45 +198,61 @@ class ComputerVision:
                         angle_out=angle_out if toggles.get("angle", True) else None,
                         dist_out=dist_out if toggles.get("distance", True) else None,
                         led_out=led_out if toggles.get("led", True) else None,
+                        speed_out=speed_out if toggles.get("speed", True) else None,
                     )
             return frame
 
-        # 3) With drones: per-drone crop processing + drawing
-        for box in drone_out.boxes:
-            x1, y1, x2, y2 = map(int, box.xyxy[0])
+        # 3) With drones: per-drone crop processing
+        for b in drone_out.boxes:
+            x1, y1, x2, y2 = map(int, b.xyxy[0])
+            drone_conf = float(b.conf[0]) if hasattr(b, "conf") else 0.0
 
-            # Drone box on full frame
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 255), 2)
-            cv2.putText(frame, "Drone", (x1, y1 - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            # ONLY drone bounding box
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
             crop = frame[y1:y2, x1:x2].copy()
             if crop.size == 0:
                 continue
 
-            # Run sub-models on crop
+            # Run sub-models on crop (NO sub-box drawing)
             angle_out = self.angle.detect(crop) if toggles.get("angle", True) else None
             dist_out  = self.distance.detect(crop) if toggles.get("distance", True) else None
             led_out   = self.led.detect(crop) if toggles.get("led", True) else None
+            speed_out = self.speed.detect(self._resize_640(crop)) if toggles.get("speed", True) else None
 
-            # Draw their boxes ON THE CROP (relative coords)
-            if toggles.get("angle", True):
-                crop = self._draw_list_boxes_on_crop(crop, angle_out, "Angle", (0, 255, 0))
-            if toggles.get("distance", True):
-                crop = self._draw_list_boxes_on_crop(crop, dist_out, "Distance", (255, 200, 100))
-            if toggles.get("led", True):
-                crop = self._draw_list_boxes_on_crop(crop, led_out, "LED", (0, 0, 255))
+            # Build ONE header label at the top of the drone box
+            led_lbl, led_conf = self._best_item(led_out)
+            ang_lbl, ang_conf = self._best_item(angle_out)
+            dst_lbl, dst_conf = self._best_item(dist_out)
+            spd_lbl, spd_conf = self._best_item(speed_out)
 
-            # Paste crop back into full frame
-            frame[y1:y2, x1:x2] = crop
+            led_part = "Drone ID: N/A"
+            ang_part = "Angle: N/A"
+            dst_part = "Distance: N/A"
+            spd_part = "Speed: N/A"
 
-            # One-line iteration log (per drone box processed)
+            if led_lbl is not None:
+                led_part = f"Drone ID: {led_lbl}, {led_conf * 100.0:.1f}%"
+            if ang_lbl is not None:
+                ang_part = f"Angle: {ang_lbl}, {ang_conf * 100.0:.1f}%"
+            if dst_lbl is not None:
+                dst_part = f"Distance: {dst_lbl}, {dst_conf * 100.0:.1f}%"
+            if spd_lbl is not None:
+                spd_part = f"Speed: {spd_lbl}, {spd_conf * 100.0:.1f}%"
+
+            header = (
+                f"Drone: {drone_conf * 100.0:.1f}% | "
+                f"{led_part} | {ang_part} | {dst_part} | {spd_part}"
+            )
+            self._draw_header_on_frame(frame, x1, y1, x2, header)
+
             if do_log:
                 self._print_iteration_line(
                     drone_out=drone_out if toggles.get("drone", True) else None,
                     angle_out=angle_out if toggles.get("angle", True) else None,
                     dist_out=dist_out if toggles.get("distance", True) else None,
                     led_out=led_out if toggles.get("led", True) else None,
+                    speed_out=speed_out if toggles.get("speed", True) else None,
                 )
 
         return frame

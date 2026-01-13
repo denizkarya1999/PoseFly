@@ -1,15 +1,3 @@
-# run_video_file_save_only.py
-"""
-Select a video file, process all frames using ComputerVision.process(),
-save the processed output video, show a Tkinter progress bar,
-and LOG RESULTS ONLY (the iteration lines printed by ComputerVision) to a .txt file.
-
-- No OpenCV preview window
-- Progress window stays responsive
-- If frame count is unknown, the bar switches to "indeterminate"
-- Results-only log file: <input>_results_only.txt
-"""
-
 import os
 import sys
 import time
@@ -32,7 +20,7 @@ class ResultsOnlyLogger:
     """
     Redirects sys.stdout to a file but only writes lines that look like:
       Iteration-123: ...
-    Everything else is dropped (so your console prints don't pollute the log).
+    Everything else is dropped.
     """
 
     def __init__(self, file_path: str, keep_console: bool = True):
@@ -43,11 +31,9 @@ class ResultsOnlyLogger:
         self._buf = ""
 
     def write(self, s: str):
-        # Optional: still show normal prints in console
         if self.keep_console:
             self._stdout.write(s)
 
-        # Buffer until newline so we can filter by line
         self._buf += s
         while "\n" in self._buf:
             line, self._buf = self._buf.split("\n", 1)
@@ -62,7 +48,6 @@ class ResultsOnlyLogger:
         self.file.flush()
 
     def close(self):
-        # flush remaining buffer as a line (rare)
         if self._buf.strip().startswith("Iteration-"):
             self.file.write(self._buf.strip() + "\n")
         self.file.flush()
@@ -106,7 +91,7 @@ def try_create_writer(out_path: str, fps: float, w: int, h: int) -> tuple[cv2.Vi
     Returns (writer, actual_output_path).
     """
     candidates = [
-        (out_path, "mp4v"),  # usually available on Windows
+        (out_path, "mp4v"),
         (out_path, "avc1"),
         (out_path, "H264"),
     ]
@@ -245,12 +230,11 @@ def main():
     sys.stdout = results_logger
 
     pipeline = ComputerVision()
-    toggles = {"drone": True, "angle": True, "distance": True, "led": True}
+
+    toggles = {"drone": True, "angle": True, "distance": True, "led": True, "speed": True}
 
     writer, actual_out_path = try_create_writer(out_path, fps, w, h)
 
-    # These prints WILL show in console, but will NOT be written to the log
-    # (because the logger only accepts lines starting with "Iteration-")
     print(f"Input : {video_path}")
     print(f"Output: {actual_out_path}")
     print(f"FPS   : {fps:.2f}")
@@ -264,6 +248,10 @@ def main():
 
     try:
         while True:
+            if ui._closed:
+                print("UI closed by user. Stopping early.")
+                break
+
             ok, frame = cap.read()
             if not ok:
                 break
@@ -286,7 +274,6 @@ def main():
         cap.release()
         writer.release()
 
-        # Restore stdout and close logger cleanly
         sys.stdout = old_stdout
         results_logger.close()
 
