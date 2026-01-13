@@ -162,7 +162,8 @@ namespace PoseFly.WinForms
                     drone = chkDrone.Checked,
                     angle = chkAngle.Checked,
                     distance = chkDistance.Checked,
-                    led = chkLed.Checked
+                    led = chkLed.Checked,
+                    speed = chkSpeed.Checked
                 }
             };
         }

@@ -25,7 +25,7 @@ class PoseFlyServer:
         self.fps = 10.0
         self.output_path = "results/full_pipeline_results/posefly_results2.mp4"
         self.save_video = True
-        self.toggles = {"drone": True, "angle": True, "distance": True, "led": True}
+        self.toggles = {"drone": True, "angle": True, "distance": True, "led": True, "speed": True}
 
         # Rolling shutter controls
         self.iso = 100
@@ -59,6 +59,7 @@ class PoseFlyServer:
                 "angle": bool(t.get("angle", True)),
                 "distance": bool(t.get("distance", True)),
                 "led": bool(t.get("led", True)),
+                "speed": bool(t.get("speed", True)),
             }
 
         if "iso" in payload:

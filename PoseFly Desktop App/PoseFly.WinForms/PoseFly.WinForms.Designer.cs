@@ -13,6 +13,7 @@
         private System.Windows.Forms.CheckBox chkAngle;
         private System.Windows.Forms.CheckBox chkDistance;
         private System.Windows.Forms.CheckBox chkLed;
+        private System.Windows.Forms.CheckBox chkSpeed;
 
         private System.Windows.Forms.GroupBox grpSettings;
         private System.Windows.Forms.TableLayoutPanel gridSettings;
@@ -65,6 +66,7 @@
             chkAngle = new CheckBox();
             chkDistance = new CheckBox();
             chkLed = new CheckBox();
+            chkSpeed = new CheckBox();
             grpSettings = new GroupBox();
             gridSettings = new TableLayoutPanel();
             chkSave = new CheckBox();
@@ -136,9 +138,10 @@
             grpInference.Dock = DockStyle.Top;
             grpInference.Location = new Point(15, 15);
             grpInference.Name = "grpInference";
-            grpInference.Size = new Size(890, 120);
+            grpInference.Size = new Size(890, 145);
             grpInference.TabIndex = 0;
             grpInference.TabStop = false;
+            flowInference.AutoScroll = true;
             grpInference.Text = "Inference";
 
             // 
@@ -148,6 +151,7 @@
             flowInference.Controls.Add(chkAngle);
             flowInference.Controls.Add(chkDistance);
             flowInference.Controls.Add(chkLed);
+            flowInference.Controls.Add(chkSpeed);
             flowInference.Dock = DockStyle.Fill;
             flowInference.FlowDirection = FlowDirection.TopDown;
             flowInference.Location = new Point(3, 19);
@@ -203,6 +207,18 @@
             chkLed.Size = new Size(112, 19);
             chkLed.TabIndex = 3;
             chkLed.Text = "LED ID Inference";
+
+            // 
+            // chkSpeed
+            // 
+            chkSpeed.AutoSize = true;
+            chkSpeed.Checked = true;
+            chkSpeed.CheckState = CheckState.Checked;
+            chkSpeed.Location = new Point(3, 103); // next row after LED
+            chkSpeed.Name = "chkSpeed";
+            chkSpeed.Size = new Size(118, 19);
+            chkSpeed.TabIndex = 4;
+            chkSpeed.Text = "Speed Detection Inference";
 
             // 
             // grpSettings
