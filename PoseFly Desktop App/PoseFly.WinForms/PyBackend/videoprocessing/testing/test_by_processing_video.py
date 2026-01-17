@@ -6,11 +6,12 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 # ---- Make sure PyBackend root is on sys.path so `machinelearning` imports work ----
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+# Add PyBackend/ to sys.path
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from computer_vision import ComputerVision
+from videoprocessing.computer_vision import ComputerVision
 
 
 # ---------------------------
