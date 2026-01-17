@@ -140,7 +140,7 @@ namespace PoseFly.WinForms
         private double GetFpsSafe()
         {
             if (double.TryParse(txtFps.Text.Trim(), out var fps) && fps > 0) return fps;
-            return 10.0;
+            return 90.0;
         }
 
         private object BuildPayload()

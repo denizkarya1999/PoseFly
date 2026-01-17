@@ -22,7 +22,7 @@ class PoseFlyServer:
         # Runtime settings
         self.camera_index = 0
         self.use_dshow = True
-        self.fps = 10.0
+        self.fps = 90.0
         self.output_path = "results/full_pipeline_results/posefly_results2.mp4"
         self.save_video = True
         self.toggles = {"drone": True, "angle": True, "distance": True, "led": True, "speed": True}

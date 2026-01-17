@@ -2,30 +2,34 @@
 import time
 import cv2
 
+# Individual perception modules
 from machinelearning.main_drone_detector import DroneDetector
 from machinelearning.main_angle_detector import AngleDetector
 from machinelearning.main_distance_detector import DistanceDetector
 from machinelearning.main_led_id_detector import LEDDetector
 from machinelearning.main_speed_detector import SpeedDetector
 
-
 class ComputerVision:
     def __init__(self):
+        # Initialize all sub-models
         self.drone = DroneDetector()
         self.angle = AngleDetector()
         self.distance = DistanceDetector()
         self.led = LEDDetector()
-        self.speed = SpeedDetector()  # expects 640x640 input
+        self.speed = SpeedDetector()
 
-        # Logging control
+        # Logging control (rate-limited)
         self._last_log_t = 0.0
         self.log_every_sec = 0.5
         self.log_top_k = 8
+
+        # If no drone is detected, still run models on full frame (for debugging/logging)
         self.run_submodels_on_full_frame_when_no_drone = True
 
         self._iter = 0
 
     def _should_log_now(self) -> bool:
+        """Return True if enough time has passed to print logs."""
         if self.log_every_sec <= 0:
             return True
         now = time.time()
@@ -34,16 +38,10 @@ class ComputerVision:
             return True
         return False
 
-    # ---------- Preprocess helpers ----------
-
-    @staticmethod
-    def _resize_640(bgr):
-        return cv2.resize(bgr, (640, 640), interpolation=cv2.INTER_LINEAR)
-
     # ---------- Unified extraction for iteration logging ----------
 
     def _items_from_list(self, out):
-        # list format: [(coords, label, conf)] OR [(id, label, conf)]
+        # Output already in list format: [(coords, label, conf)]
         if not isinstance(out, list) or len(out) == 0:
             return None
         items = []
@@ -56,7 +54,7 @@ class ComputerVision:
         return items if items else None
 
     def _items_from_detection(self, out):
-        # Ultralytics detection Results -> list[(class_label, conf)]
+        # Ultralytics Results format (YOLO-style)
         if out is None or not hasattr(out, "boxes") or out.boxes is None or len(out.boxes) == 0:
             return None
         names = getattr(out, "names", None)
@@ -71,12 +69,14 @@ class ComputerVision:
         return items if items else None
 
     def _collect_items(self, out):
+        # Try list-format first, fallback to YOLO detection format
         items = self._items_from_list(out)
         if items is None:
             items = self._items_from_detection(out)
         return items
 
     def _top_k_str(self, out):
+        # Format top-K predictions for logging
         items = self._collect_items(out)
         if not items:
             return "(no)"
@@ -89,7 +89,7 @@ class ComputerVision:
         return "(" + ", ".join(parts) + ")"
 
     def _best_item(self, out):
-        """Return (label, conf) for the single best prediction, or (None, None)."""
+        """Return (label, confidence) of the highest-confidence prediction."""
         items = self._collect_items(out)
         if not items:
             return None, None
@@ -97,6 +97,7 @@ class ComputerVision:
         return str(lbl), float(conf)
 
     def _print_iteration_line(self, drone_out=None, angle_out=None, dist_out=None, led_out=None, speed_out=None):
+        # One-line summary per iteration
         self._iter += 1
         pieces = [f"Iteration-{self._iter}:"]
 
@@ -117,6 +118,7 @@ class ComputerVision:
 
     @staticmethod
     def _wrap_by_pipe(text: str, max_chars: int):
+        # Break long header text into at most two readable lines
         tokens = text.split(" | ")
         lines = []
         cur = ""
@@ -134,6 +136,7 @@ class ComputerVision:
 
     @staticmethod
     def _draw_header_on_frame(frame_bgr, x1, y1, x2, header_text):
+        # Draw black background + white text above the drone box
         H, W = frame_bgr.shape[:2]
         x1 = max(0, min(int(x1), W - 1))
         x2 = max(0, min(int(x2), W - 1))
@@ -146,18 +149,19 @@ class ComputerVision:
 
         max_chars = max(20, int(box_w / 10))
         lines = ComputerVision._wrap_by_pipe(header_text, max_chars=max_chars)
-        lines = lines[:2]  # max 2 lines
+        lines = lines[:2]  # limit to 2 lines
 
         line_h = 0
         for ln in lines:
             (_, th), _ = cv2.getTextSize(ln, font, font_scale, thickness)
             line_h = max(line_h, th)
+
         pad_y = 6
         strip_h = (line_h + pad_y) * len(lines) + pad_y
 
         y_top = y1 - strip_h - 2
         if y_top < 0:
-            y_top = y1 + 2  # inside box
+            y_top = y1 + 2  # fallback: draw inside box
         y_bottom = min(H - 1, y_top + strip_h)
 
         cv2.rectangle(frame_bgr, (x1, y_top), (x2, y_bottom), (0, 0, 0), -1)
@@ -174,7 +178,7 @@ class ComputerVision:
     def process(self, frame, toggles):
         do_log = self._should_log_now()
 
-        # 1) Drone detection
+        # 1) Drone detection on full frame
         drone_out = self.drone.detect(frame) if toggles.get("drone", True) else None
 
         has_boxes = (
@@ -184,75 +188,68 @@ class ComputerVision:
             len(drone_out.boxes) > 0
         )
 
-        # 2) If no drones, optionally run sub-models on full frame for logging only
+        # 2) No drone found → optionally run all models on full frame (logging only)
         if not has_boxes:
             if self.run_submodels_on_full_frame_when_no_drone:
                 angle_out = self.angle.detect(frame) if toggles.get("angle", True) else None
                 dist_out  = self.distance.detect(frame) if toggles.get("distance", True) else None
                 led_out   = self.led.detect(frame) if toggles.get("led", True) else None
-                speed_out = self.speed.detect(self._resize_640(frame)) if toggles.get("speed", True) else None
+                speed_out = self.speed.detect(frame) if toggles.get("speed", True) else None
 
                 if do_log:
                     self._print_iteration_line(
                         drone_out=drone_out if toggles.get("drone", True) else None,
-                        angle_out=angle_out if toggles.get("angle", True) else None,
-                        dist_out=dist_out if toggles.get("distance", True) else None,
-                        led_out=led_out if toggles.get("led", True) else None,
-                        speed_out=speed_out if toggles.get("speed", True) else None,
+                        angle_out=angle_out,
+                        dist_out=dist_out,
+                        led_out=led_out,
+                        speed_out=speed_out,
                     )
             return frame
 
-        # 3) With drones: per-drone crop processing
+        # 3) Drone(s) detected → process each drone crop
         for b in drone_out.boxes:
             x1, y1, x2, y2 = map(int, b.xyxy[0])
             drone_conf = float(b.conf[0]) if hasattr(b, "conf") else 0.0
 
-            # ONLY drone bounding box
+            # Draw only the drone bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
 
             crop = frame[y1:y2, x1:x2].copy()
             if crop.size == 0:
                 continue
 
-            # Run sub-models on crop (NO sub-box drawing)
+            # Run all sub-models on the drone crop
             angle_out = self.angle.detect(crop) if toggles.get("angle", True) else None
             dist_out  = self.distance.detect(crop) if toggles.get("distance", True) else None
             led_out   = self.led.detect(crop) if toggles.get("led", True) else None
-            speed_out = self.speed.detect(self._resize_640(crop)) if toggles.get("speed", True) else None
+            speed_out = self.speed.detect(crop) if toggles.get("speed", True) else None
 
-            # Build ONE header label at the top of the drone box
+            # Extract best prediction per model
             led_lbl, led_conf = self._best_item(led_out)
             ang_lbl, ang_conf = self._best_item(angle_out)
             dst_lbl, dst_conf = self._best_item(dist_out)
             spd_lbl, spd_conf = self._best_item(speed_out)
 
-            led_part = "Drone ID: N/A"
-            ang_part = "Angle: N/A"
-            dst_part = "Distance: N/A"
-            spd_part = "Speed: N/A"
-
-            if led_lbl is not None:
-                led_part = f"Drone ID: {led_lbl}, {led_conf * 100.0:.1f}%"
-            if ang_lbl is not None:
-                ang_part = f"Angle: {ang_lbl}, {ang_conf * 100.0:.1f}%"
-            if dst_lbl is not None:
-                dst_part = f"Distance: {dst_lbl}, {dst_conf * 100.0:.1f}%"
-            if spd_lbl is not None:
-                spd_part = f"Speed: {spd_lbl}, {spd_conf * 100.0:.1f}%"
+            # Build readable header text
+            led_part = f"Drone ID: {led_lbl}, {led_conf*100:.1f}%" if led_lbl else "Drone ID: N/A"
+            ang_part = f"Angle: {ang_lbl}, {ang_conf*100:.1f}%" if ang_lbl else "Angle: N/A"
+            dst_part = f"Distance: {dst_lbl}, {dst_conf*100:.1f}%" if dst_lbl else "Distance: N/A"
+            spd_part = f"Speed: {spd_lbl}, {spd_conf*100:.1f}%" if spd_lbl else "Speed: N/A"
 
             header = (
                 f"Drone: {drone_conf * 100.0:.1f}% | "
                 f"{led_part} | {ang_part} | {dst_part} | {spd_part}"
             )
+
             self._draw_header_on_frame(frame, x1, y1, x2, header)
 
             if do_log:
                 self._print_iteration_line(
                     drone_out=drone_out if toggles.get("drone", True) else None,
-                    angle_out=angle_out if toggles.get("angle", True) else None,
-                    dist_out=dist_out if toggles.get("distance", True) else None,
-                    led_out=led_out if toggles.get("led", True) else None,
-                    speed_out=speed_out if toggles.get("speed", True) else None,
+                    angle_out=angle_out,
+                    dist_out=dist_out,
+                    led_out=led_out,
+                    speed_out=speed_out,
                 )
 
         return frame
