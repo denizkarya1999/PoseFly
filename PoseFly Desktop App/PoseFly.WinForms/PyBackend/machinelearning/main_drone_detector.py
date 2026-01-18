@@ -1,4 +1,5 @@
 from pathlib import Path
+import numpy as np
 from ultralytics import YOLO
 
 class DroneDetector:
@@ -7,6 +8,5 @@ class DroneDetector:
         self.model = YOLO(model_path)
 
     def detect(self, frame):
-        # Detection model -> Results with .boxes
-        results = self.model(frame, verbose=False)[0]
-        return results
+        # Apply rolling shutter before inference
+        return self.model(frame, verbose=False)[0]

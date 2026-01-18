@@ -29,7 +29,7 @@ class PoseFlyServer:
 
         # Rolling shutter controls
         self.iso = 100
-        self.shutter_hz = 1000.0
+        self.shutter_hz = 60.0
 
     def _send_line(self, line: str):
         with self.client_lock:

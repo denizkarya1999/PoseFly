@@ -334,7 +334,7 @@
             numShutterHz.Name = "numShutterHz";
             numShutterHz.Size = new Size(90, 23);
             numShutterHz.TabIndex = 8;
-            numShutterHz.Value = new decimal(new int[] { 1000, 0, 0, 0 });
+            numShutterHz.Value = new decimal(new int[] { 60, 0, 0, 0 });
             // 
             // lblOutputPath
             // 

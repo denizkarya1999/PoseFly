@@ -1,7 +1,65 @@
 ﻿from pathlib import Path
+import numpy as np
 from ultralytics import YOLO
+import cv2
+import math
 
 ANGLE_LABELS = ["0_360", "45", "90", "135", "180", "225", "270", "315"]
+
+# Rolling-shutter configuration
+ISO = 800
+SHUTTER_HZ = 6000
+
+def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
+    h, w, _ = frame.shape
+    row_time = 1.0 / max(1, int(shutter_hz))
+    out = frame.copy()
+
+    # --- Camera-like mapping (matches camera.py) ---
+
+    # ISO -> gain (log mapping)
+    iso_f = float(max(1, iso))
+    t_iso = (math.log(iso_f) - math.log(50.0)) / (math.log(6400.0) - math.log(50.0))
+    t_iso = max(0.0, min(1.0, t_iso))
+    gain = 2.0 + t_iso * 18.0  # ~2..20
+
+    # shutter_hz -> exposure proxy (higher Hz => darker)
+    sh_f = float(max(1, shutter_hz))
+    t_sh = (math.log(sh_f) - math.log(5.0)) / (math.log(6000.0) - math.log(5.0))
+    t_sh = max(0.0, min(1.0, t_sh))
+
+    exposure = -10.0 + (1.0 - t_sh) * 6.0
+    exposure_scale = 2.0 ** (exposure / 2.0)
+
+    brightness = 95.0 + (1.0 - t_sh) * 15.0
+    brightness_scale = brightness / 100.0
+
+    # --- OOK stripe model (row-time based) ---
+    led_freq_hz = 2000
+    duty = 0.5
+    contrast = 0.90
+
+    y = np.arange(h, dtype=np.float32)
+    t = y * row_time
+    phase = (t * led_freq_hz) % 1.0
+    on = (phase < duty).astype(np.float32)
+
+    row_gain = (1.0 - contrast) + contrast * on
+    row_gain = row_gain[:, None]
+
+    # Apply everything in HSV value channel
+    hsv = cv2.cvtColor(out, cv2.COLOR_BGR2HSV).astype(np.float32)
+    v = hsv[:, :, 2]
+
+    v *= gain
+    v *= exposure_scale
+    v *= brightness_scale
+    v *= row_gain
+
+    hsv[:, :, 2] = np.clip(v, 0, 255)
+    out = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
+
+    return out
 
 class AngleDetector:
     def __init__(self, model_path="models/Posefly_Angle.pt"):
@@ -11,10 +69,18 @@ class AngleDetector:
     def detect(self, frame, conf=0.001, iou=0.7):
         """
         Detection-style model:
-        - Use very low conf so we usually get at least 1 box
-        - Return top-1 prediction as [(coords, label, conf)]
+        - Low confidence to ensure at least one box
+        - Return top-1 prediction
         """
-        r = self.model.predict(frame, verbose=False, conf=conf, iou=iou, max_det=1)[0]
+        frame = apply_rolling_shutter(frame)
+
+        r = self.model.predict(
+            frame,
+            verbose=False,
+            conf=conf,
+            iou=iou,
+            max_det=1
+        )[0]
 
         if r.boxes is None or len(r.boxes) == 0:
             return []

@@ -12,7 +12,7 @@ class Camera:
 
         # ---- Rolling shutter / ISO state ----
         self.iso = 100
-        self.shutter_hz = 1000.0
+        self.shutter_hz = 60.0
 
         self.out = None
         self.fourcc = cv2.VideoWriter_fourcc(*"mp4v")
