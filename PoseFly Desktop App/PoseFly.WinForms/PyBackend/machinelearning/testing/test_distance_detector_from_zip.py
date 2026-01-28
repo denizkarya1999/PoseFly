@@ -39,19 +39,14 @@ def pick_zip_file():
 
 
 # -------------------- Ground truth from filename --------------------
-def gt_from_filename(path: str):
-    """
-    Expected filenames like:
-      1m-xxx.jpg or 1m_xxx.png
-      2m-...
-      3m-...
-      4m-...
-      5m-...
-    """
-    name = os.path.basename(path).lower()
-    m = re.match(r"^(1m|2m|3m|4m|5m)[_\-]", name)
-    return m.group(1) if m else None
+import os
 
+VALID = {"1m", "2m", "3m", "4m", "5m"}
+
+def gt_from_filename(path: str):
+    name = os.path.basename(path).lower()
+    gt = name[:2]  # first 2 chars
+    return gt if gt in VALID else None
 
 # -------------------- Confusion matrix plot (🍊 ORANGE THEME) --------------------
 def plot_confusion_matrix(cm, classes):

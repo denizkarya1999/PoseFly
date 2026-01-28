@@ -1,14 +1,43 @@
 from pathlib import Path
+import sys
 import numpy as np
-from ultralytics import YOLO
 import math
 import cv2
+
+import pathlib, os
+if os.name == "nt":
+    pathlib.PosixPath = pathlib.WindowsPath
+
+# Ensure models/ is on sys.path (YOLO YAML safe)
+MODELS_DIR = Path(__file__).parent / "models"
+
+if str(MODELS_DIR) not in sys.path:
+    sys.path.insert(0, str(MODELS_DIR))
+
+# Import + register LSA for Ultralytics YAML
+from LSA import LSA
+
+import ultralytics.nn.tasks as tasks
+tasks.LSA = LSA  # <-- allows YAML to resolve "LSA"
+
+# --------------------------------------------------
+# YOLO import
+# --------------------------------------------------
+from ultralytics import YOLO
 
 DISTANCE_LABELS = ["1m", "2m", "3m", "4m", "5m"]
 
 # Rolling-shutter configuration
-ISO = 800
+ISO = 1100
 SHUTTER_HZ = 6000
+
+import cv2
+
+def resize_to_512(frame):
+    """
+    Resize frame to 512x512 using area interpolation (best for downscaling).
+    """
+    return cv2.resize(frame, (512, 512), interpolation=cv2.INTER_AREA)
 
 def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     h, w, _ = frame.shape
@@ -68,6 +97,7 @@ class DistanceDetector:
 
     def detect(self, frame, conf=0.001, iou=0.7):
         frame = apply_rolling_shutter(frame)
+        frame = resize_to_512(frame)
 
         r = self.model.predict(
             frame,
