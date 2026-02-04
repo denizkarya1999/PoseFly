@@ -353,5 +353,10 @@ namespace PoseFly.WinForms
         {
             lblStatus.Text = "Status: " + s;
         }
+
+        private void numIso_ValueChanged(object sender, EventArgs e)
+        {
+
+        }
     }
 }

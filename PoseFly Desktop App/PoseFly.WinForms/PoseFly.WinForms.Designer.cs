@@ -314,6 +314,7 @@
             numIso.Size = new Size(80, 23);
             numIso.TabIndex = 6;
             numIso.Value = new decimal(new int[] { 100, 0, 0, 0 });
+            numIso.ValueChanged += numIso_ValueChanged;
             // 
             // lblShutterHz
             // 
