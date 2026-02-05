@@ -62,30 +62,43 @@ class Camera:
 
     def _apply_rollingshutter(self):
         """
-        Apply stored ISO + shutter_hz to the camera.
-        Note: webcams don't expose true rolling-shutter readout timing;
-              this maps to exposure/gain/brightness as a practical control.
+            Apply stored ISO + shutter_hz to the camera.
+            Note: webcams don't expose true rolling-shutter readout timing;
+            this maps to exposure/gain/brightness as a practical control.
         """
         if self.cap is None:
             return
 
-        # Prefer manual exposure (DirectShow convention: ~0.75 manual)
+        # Prefer manual exposure (DirectShow convention)
         self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
 
-        # ISO -> gain (log mapping)
-        t_iso = (math.log(self.iso) - math.log(50)) / (math.log(6400) - math.log(50))
+        # ---------- ISO -> gain (MATCHES frame algorithm) ----------
+        iso_f = float(max(1, self.iso))
+        t_iso = (math.log(iso_f) - math.log(50.0)) / (math.log(6400.0) - math.log(50.0))
         t_iso = max(0.0, min(1.0, t_iso))
-        gain = 2.0 + t_iso * 18.0  # ~2..20
+        gain = 2.0 + t_iso * 18.0          # ~2 .. 20
         self.cap.set(cv2.CAP_PROP_GAIN, float(gain))
 
-        # shutter_hz -> exposure (higher Hz => shorter exposure => darker)
-        t_sh = (math.log(self.shutter_hz) - math.log(5.0)) / (math.log(6000.0) - math.log(5.0))
+        # ---------- shutter_hz -> exposure / brightness ----------
+        sh_f = float(max(1, self.shutter_hz))
+        t_sh = (math.log(sh_f) - math.log(5.0)) / (math.log(6000.0) - math.log(5.0))
         t_sh = max(0.0, min(1.0, t_sh))
-        exposure = -10.0 + (1.0 - t_sh) * 6.0  # ~[-10..-4]
+
+        # Exposure proxy (same curve as frame algorithm)
+        exposure = -10.0 + (1.0 - t_sh) * 6.0   # ~[-10 .. -4]
         self.cap.set(cv2.CAP_PROP_EXPOSURE, float(exposure))
 
-        # brightness compensation
-        brightness = BASE_BRIGHTNESS + (1.0 - t_sh)
+        # ---------- Brightness (USES BASE_BRIGHTNESS) ----------
+        # Frame algorithm uses: 95 + (1 - t_sh) * 15  → scale
+        # Camera needs a normalized offset instead.
+        brightness_scale = (95.0 + (1.0 - t_sh) * 15.0) / 100.0  # 0.95 .. 1.10
+
+        # Combine with BASE_BRIGHTNESS offset
+        brightness = BASE_BRIGHTNESS + brightness_scale
+
+        # Clamp conservatively (most webcams expect ~0..1)
+        brightness = max(0.0, min(1.0, brightness))
+
         self.cap.set(cv2.CAP_PROP_BRIGHTNESS, float(brightness))
 
     def read(self):
