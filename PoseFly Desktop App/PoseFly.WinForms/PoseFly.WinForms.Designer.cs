@@ -292,7 +292,7 @@
             txtFps.Name = "txtFps";
             txtFps.Size = new Size(80, 23);
             txtFps.TabIndex = 4;
-            txtFps.Text = "90.0";
+            txtFps.Text = "60.0";
             // 
             // lblIso
             // 
@@ -313,7 +313,7 @@
             numIso.Name = "numIso";
             numIso.Size = new Size(80, 23);
             numIso.TabIndex = 6;
-            numIso.Value = new decimal(new int[] { 100, 0, 0, 0 });
+            numIso.Value = new decimal(new int[] { 250, 0, 0, 0 });
             numIso.ValueChanged += numIso_ValueChanged;
             // 
             // lblShutterHz
@@ -335,7 +335,7 @@
             numShutterHz.Name = "numShutterHz";
             numShutterHz.Size = new Size(90, 23);
             numShutterHz.TabIndex = 8;
-            numShutterHz.Value = new decimal(new int[] { 60, 0, 0, 0 });
+            numShutterHz.Value = new decimal(new int[] { 1000, 0, 0, 0 });
             // 
             // lblOutputPath
             // 

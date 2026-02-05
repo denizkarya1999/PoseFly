@@ -3,6 +3,8 @@ import os
 import cv2
 import math
 
+# --- Brightness ---
+BASE_BRIGHTNESS = 0.0
 
 class Camera:
     def __init__(self):
@@ -11,8 +13,8 @@ class Camera:
         self.h = None
 
         # ---- Rolling shutter / ISO state ----
-        self.iso = 100
-        self.shutter_hz = 60.0
+        self.iso = 250
+        self.shutter_hz = 1000.0
 
         self.out = None
         self.fourcc = cv2.VideoWriter_fourcc(*"mp4v")
@@ -83,7 +85,7 @@ class Camera:
         self.cap.set(cv2.CAP_PROP_EXPOSURE, float(exposure))
 
         # brightness compensation
-        brightness = 95.0 + (1.0 - t_sh) * 15.0
+        brightness = BASE_BRIGHTNESS + (1.0 - t_sh)
         self.cap.set(cv2.CAP_PROP_BRIGHTNESS, float(brightness))
 
     def read(self):

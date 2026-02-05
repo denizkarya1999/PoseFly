@@ -22,14 +22,14 @@ class PoseFlyServer:
         # Runtime settings
         self.camera_index = 0
         self.use_dshow = True
-        self.fps = 90.0
-        self.output_path = "results/full_pipeline_results/posefly_results2.mp4"
+        self.fps = 60.0
+        self.output_path = "results/full_pipeline_results/posefly_results.mp4"
         self.save_video = True
         self.toggles = {"drone": True, "angle": True, "distance": True, "led": True, "speed": True}
 
         # Rolling shutter controls
-        self.iso = 100
-        self.shutter_hz = 60.0
+        self.iso = 250
+        self.shutter_hz = 1000.0
 
     def _send_line(self, line: str):
         with self.client_lock:
