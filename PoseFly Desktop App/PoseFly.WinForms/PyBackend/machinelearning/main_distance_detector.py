@@ -28,8 +28,8 @@ from ultralytics import YOLO
 DISTANCE_LABELS = ["1m", "2m", "3m", "4m", "5m"]
 
 # Rolling-shutter configuration
-ISO = 1200
-SHUTTER_HZ = 3000
+ISO = 1000
+SHUTTER_HZ = 6000
 
 import cv2
 
@@ -91,13 +91,13 @@ def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     return out
 
 class DistanceDetector:
-    def __init__(self, model_path="models/Posefly_Distance.pt"):
+    def __init__(self, model_path="models/PoseFly_Distance_Custom_YOLOv26.pt"):
         model_path = Path(__file__).parent / model_path
         self.model = YOLO(model_path)
 
     def detect(self, frame, conf=0.001, iou=0.7):
         frame = apply_rolling_shutter(frame)
-        frame = resize_to_512(frame)
+        #frame = resize_to_512(frame)
 
         r = self.model.predict(
             frame,

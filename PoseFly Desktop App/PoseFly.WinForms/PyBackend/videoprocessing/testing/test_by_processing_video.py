@@ -213,7 +213,7 @@ def main():
         print(f"Failed to open video: {video_path}")
         return
 
-    fps = 90
+    fps = 60
     w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
     h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
