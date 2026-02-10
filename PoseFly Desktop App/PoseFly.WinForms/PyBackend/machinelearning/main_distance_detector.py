@@ -33,12 +33,6 @@ SHUTTER_HZ = 6000
 
 import cv2
 
-def resize_to_512(frame):
-    """
-    Resize frame to 512x512 using area interpolation (best for downscaling).
-    """
-    return cv2.resize(frame, (512, 512), interpolation=cv2.INTER_AREA)
-
 def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     h, w, _ = frame.shape
     row_time = 1.0 / max(1, int(shutter_hz))
@@ -97,7 +91,6 @@ class DistanceDetector:
 
     def detect(self, frame, conf=0.001, iou=0.7):
         frame = apply_rolling_shutter(frame)
-        #frame = resize_to_512(frame)
 
         r = self.model.predict(
             frame,
