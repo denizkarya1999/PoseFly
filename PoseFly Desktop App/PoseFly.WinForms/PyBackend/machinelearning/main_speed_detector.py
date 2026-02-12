@@ -79,13 +79,13 @@ def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     return out
 
 class SpeedDetector:
-    def __init__(self, model_path="models/Posefly_Speed_Detection_Custom_YOLO_v26m.pt"):
+    def __init__(self, model_path="models/Posefly_Speed_Detection.pt"):
         model_path = Path(__file__).parent / model_path
         self.model = YOLO(model_path)
 
     def detect(self, frame, conf=0.001, iou=0.7):
         # Apply rolling shutter before spatial normalization
-        #frame = apply_rolling_shutter(frame)
+        frame = apply_rolling_shutter(frame)
 
         # Resize to model input resolution
         frame_640 = cv2.resize(frame, (640, 640), interpolation=cv2.INTER_LINEAR)
