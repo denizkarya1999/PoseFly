@@ -85,7 +85,7 @@ def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     return out
 
 class DistanceDetector:
-    def __init__(self, model_path="models/PoseFly_Distance_Custom_YOLOv26.pt"):
+    def __init__(self, model_path="models/Posefly_Distance.pt"):
         model_path = Path(__file__).parent / model_path
         self.model = YOLO(model_path)
 

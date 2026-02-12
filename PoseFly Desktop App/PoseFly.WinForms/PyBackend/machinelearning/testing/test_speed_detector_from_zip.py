@@ -38,13 +38,17 @@ def pick_zip_file():
 # -------------------- Ground truth from filename --------------------
 def gt_from_filename(path: str):
     """
-    Expected filenames:
+    Accepts filenames like:
       Fast_xxx.jpg
-      Slow_xxx.png
-      Static_xxx.jpeg
+      PoseFly_Fast_xxx.jpg
+      something-Slow-xxx.png
+      test_Static_frame.jpeg
     """
+
     name = os.path.basename(path)
-    m = re.match(r"^(fast|slow|static)[_\-]", name, flags=re.IGNORECASE)
+
+    m = re.search(r"(Fast|Slow|Static)", name, flags=re.IGNORECASE)
+
     return m.group(1).lower() if m else None
 
 

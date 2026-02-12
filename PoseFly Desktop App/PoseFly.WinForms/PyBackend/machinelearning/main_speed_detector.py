@@ -1,13 +1,30 @@
 ﻿import numpy as np
 from ultralytics import YOLO
 from pathlib import Path
+import sys
 import math
 import cv2
+
+import pathlib, os
+if os.name == "nt":
+    pathlib.PosixPath = pathlib.WindowsPath
+
+# Ensure models/ is on sys.path (YOLO YAML safe)
+MODELS_DIR = Path(__file__).parent / "models"
+
+if str(MODELS_DIR) not in sys.path:
+    sys.path.insert(0, str(MODELS_DIR))
+
+# Import + register LSA for Ultralytics YAML
+from LSA import LSA
+
+import ultralytics.nn.tasks as tasks
+tasks.LSA = LSA  # <-- allows YAML to resolve "LSA"
 
 SPEED_LABELS = ["Fast", "Slow", "Static"]
 
 # Rolling-shutter configuration
-ISO = 800
+ISO = 1000
 SHUTTER_HZ = 6000
 
 def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
@@ -62,13 +79,13 @@ def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     return out
 
 class SpeedDetector:
-    def __init__(self, model_path="models/Posefly_Speed_Detection.pt"):
+    def __init__(self, model_path="models/Posefly_Speed_Detection_Custom_YOLO_v26m.pt"):
         model_path = Path(__file__).parent / model_path
         self.model = YOLO(model_path)
 
     def detect(self, frame, conf=0.001, iou=0.7):
         # Apply rolling shutter before spatial normalization
-        frame = apply_rolling_shutter(frame)
+        #frame = apply_rolling_shutter(frame)
 
         # Resize to model input resolution
         frame_640 = cv2.resize(frame, (640, 640), interpolation=cv2.INTER_LINEAR)
