@@ -79,7 +79,7 @@ def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     return out
 
 class SpeedDetector:
-    def __init__(self, model_path="models/Posefly_Speed_Detection.pt"):
+    def __init__(self, model_path="models/PoseFly_Speed_Recognition_Outdoor_Custom_YOLO_v26m.pt"):
         model_path = Path(__file__).parent / model_path
         self.model = YOLO(model_path)
 
