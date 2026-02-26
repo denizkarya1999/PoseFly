@@ -1,8 +1,14 @@
 # camera.py
+# (Only compatibility-related changes were made:
+#  - OS-aware backend selection (Windows: DShow/MSMF, Linux: V4L2/Any/GStreamer)
+#  - best-effort CAP_PROP_* sets so Linux doesn't crash on unsupported properties
+#  - writer mkdir fix when path has no directory)
+
 import os
 import cv2
 import math
 import numpy as np
+import platform  # <-- compatibility
 
 # ============================================================
 # OPTION A (Outdoor-stable video):
@@ -67,6 +73,7 @@ HW_FORCE_GAMMA = 3.0
 # ============================================================
 ENABLE_ROLLING_SHUTTER = False
 
+
 class Camera:
     def __init__(self):
         self.cap = None
@@ -96,6 +103,23 @@ class Camera:
 
         # Precomputed gamma LUT for FORCE_DARK
         self._dark_lut = None
+
+    # ---------------- Compatibility helpers ----------------
+    @staticmethod
+    def _safe_set(cap, prop, value):
+        """Best-effort set: on Linux some properties are unsupported; never crash."""
+        try:
+            cap.set(prop, value)
+        except Exception:
+            pass
+
+    @staticmethod
+    def _safe_get(cap, prop, default=np.nan):
+        try:
+            v = cap.get(prop)
+            return v if np.isfinite(v) else default
+        except Exception:
+            return default
 
     # ---------------- Public controls ----------------
     def set_brightness(self, mul: float):
@@ -139,17 +163,13 @@ class Camera:
             err = AUTO_TARGET_V - mean_v
             return err, sat_ratio, int(valid.size)
 
-        # Robust brightness proxy
         level = float(np.percentile(valid, 60))
         err = AUTO_TARGET_V - level
 
         desired_mul = AUTO_TARGET_V / max(1.0, level)
-
-        # Rate limit to prevent sudden swings
         desired_mul = max(self.brightness_mul * AUTO_MAX_STEP_DN,
                           min(self.brightness_mul * AUTO_MAX_STEP_UP, desired_mul))
 
-        # Smooth update (EMA)
         self.brightness_mul = (1.0 - AUTO_ALPHA) * self.brightness_mul + AUTO_ALPHA * desired_mul
         self.brightness_mul = float(max(AUTO_MIN_MUL, min(AUTO_MAX_MUL, self.brightness_mul)))
 
@@ -159,22 +179,15 @@ class Camera:
         """Set hardware exposure mode to MANUAL once (DShow typical), without flipping repeatedly."""
         if self.cap is None or self._hw_manual_set:
             return
-        try:
-            # DShow: 0.25 tends to mean MANUAL, 0.75 tends to mean AUTO
-            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
-            self._hw_manual_set = True
-        except Exception:
-            pass
+        # This property behaves differently across backends/OS; best-effort only.
+        self._safe_set(self.cap, cv2.CAP_PROP_AUTO_EXPOSURE, 0.25)
+        self._hw_manual_set = True
 
     def _maybe_nudge_hw_exposure(self, err, sat_ratio):
-        """
-        Best-effort hardware exposure adjustment.
-        Assumes MANUAL mode already set once; does not toggle AUTO/MANUAL in the loop.
-        """
+        """Best-effort hardware exposure adjustment."""
         if self.cap is None:
             return
 
-        # Only act if clearly off
         if abs(err) < HW_ERR_DEADZONE and sat_ratio < 0.25:
             return
 
@@ -183,103 +196,94 @@ class Camera:
             if not np.isfinite(cur):
                 return
 
-            # If saturated / too bright -> decrease exposure (more negative)
             if sat_ratio > 0.35 or err < 0:
                 cur -= HW_EXPOSURE_STEP
             else:
                 cur += HW_EXPOSURE_STEP
 
             cur = max(HW_EXPOSURE_MIN, min(HW_EXPOSURE_MAX, cur))
-            self.cap.set(cv2.CAP_PROP_EXPOSURE, cur)
+            self._safe_set(self.cap, cv2.CAP_PROP_EXPOSURE, cur)
 
-            # Optional: gently reduce gain when saturated (driver-dependent)
             if sat_ratio > 0.35:
                 g = float(self.cap.get(cv2.CAP_PROP_GAIN))
                 if np.isfinite(g):
-                    self.cap.set(cv2.CAP_PROP_GAIN, max(0.0, g - 1.0))
+                    self._safe_set(self.cap, cv2.CAP_PROP_GAIN, max(0.0, g - 1.0))
         except Exception:
             pass
 
     def _build_dark_lut(self):
-        """Build LUT for gamma darkening when FORCE_DARK is enabled."""
         inv_gamma = 1.0 / max(0.1, float(DARK_GAMMA))
         lut = (np.linspace(0, 1, 256) ** inv_gamma) * 255.0
         self._dark_lut = lut.astype(np.uint8)
 
     def _force_dark_hw_once(self):
-        """Force hardware settings to be as dark as possible (best-effort)."""
         if self.cap is None:
             return
 
-        # Set manual exposure mode once
         self._ensure_hw_manual_once()
-
-        # Push the camera to minimum light (if supported)
-        try:
-            self.cap.set(cv2.CAP_PROP_EXPOSURE, float(HW_FORCE_EXPOSURE))
-        except Exception:
-            pass
-        try:
-            self.cap.set(cv2.CAP_PROP_GAIN, float(HW_FORCE_GAIN))
-        except Exception:
-            pass
-        try:
-            self.cap.set(cv2.CAP_PROP_BRIGHTNESS, float(HW_FORCE_BRIGHTNESS))
-        except Exception:
-            pass
-        try:
-            self.cap.set(cv2.CAP_PROP_GAMMA, float(HW_FORCE_GAMMA))
-        except Exception:
-            pass
+        self._safe_set(self.cap, cv2.CAP_PROP_EXPOSURE, float(HW_FORCE_EXPOSURE))
+        self._safe_set(self.cap, cv2.CAP_PROP_GAIN, float(HW_FORCE_GAIN))
+        self._safe_set(self.cap, cv2.CAP_PROP_BRIGHTNESS, float(HW_FORCE_BRIGHTNESS))
+        self._safe_set(self.cap, cv2.CAP_PROP_GAMMA, float(HW_FORCE_GAMMA))
 
     # ---------------- Camera lifecycle ----------------
     def open(self, camera_index=0, use_dshow=True):
         if self.cap is not None:
             return
 
-        self.cap = (
-            cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
-            if use_dshow else
-            cv2.VideoCapture(camera_index)
-        )
+        sysname = platform.system()
 
-        if not self.cap.isOpened():
-            self.cap = None
-            raise RuntimeError("Could not open webcam.")
+        # ---- COMPATIBILITY: choose a backend sequence per OS ----
+        if sysname == "Windows":
+            backends = ([cv2.CAP_DSHOW] if use_dshow else []) + [cv2.CAP_MSMF, cv2.CAP_ANY]
+        else:
+            # Ubuntu/Linux: prefer V4L2; then generic; then GStreamer if available
+            backends = [cv2.CAP_V4L2, cv2.CAP_ANY, cv2.CAP_GSTREAMER]
+
+        last_backend = None
+        cap = None
+        for b in backends:
+            last_backend = b
+            try:
+                cap = cv2.VideoCapture(int(camera_index), b)
+            except Exception:
+                cap = None
+
+            if cap is not None and cap.isOpened():
+                self.cap = cap
+                break
+
+            try:
+                if cap is not None:
+                    cap.release()
+            except Exception:
+                pass
+
+        if self.cap is None:
+            raise RuntimeError(
+                f"Could not open webcam (index={camera_index}) on {sysname}. Tried backends={backends}."
+            )
 
         self.w = int(self.cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         self.h = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        # OPTION A: keep hardware AUTO exposure enabled (don’t fight the driver)
-        try:
-            self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
-        except Exception:
-            pass
+        # OPTION A: keep hardware AUTO exposure enabled (best-effort; backend-dependent)
+        self._safe_set(self.cap, cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
 
-        # Reset counters
         self._frame_i = 0
         self._hw_manual_set = False
 
-        # Build LUT (unused in OPTION A because FORCE_DARK=False)
         self._build_dark_lut()
 
-        # If FORCE_DARK, immediately push hardware as dark as possible and
-        # disable the adaptive controllers so nothing brightens later.
         if FORCE_DARK:
             self._force_dark_hw_once()
             self.auto_ae = False
             self.brightness_mul = 1.0
         else:
-            # OPTION A: keep software AE running
             self.auto_ae = True
             self.brightness_mul = 1.0
 
     def apply_led_settings(self):
-        """
-        Backwards-compatible function.
-        Your backend/server calls this during START.
-        OPTION A: no-op unless ENABLE_ROLLING_SHUTTER=True.
-        """
         if self.cap is None:
             raise RuntimeError("Camera not opened.")
         if not ENABLE_ROLLING_SHUTTER:
@@ -287,10 +291,6 @@ class Camera:
         self._apply_rollingshutter()
 
     def rollingshutter(self, iso: int, shutter_hz: float):
-        """
-        Set ISO-like + shutter rate (Hz) and apply.
-        OPTION A: store values but only apply if ENABLE_ROLLING_SHUTTER=True.
-        """
         self.iso = int(max(50, min(6400, iso)))
         self.shutter_hz = float(max(5.0, min(6000.0, shutter_hz)))
         if not ENABLE_ROLLING_SHUTTER:
@@ -299,26 +299,18 @@ class Camera:
 
     # ---------------- Rolling shutter (KEEP) ----------------
     def _apply_rollingshutter(self):
-        """
-        Keeps your original rolling shutter logic.
-        NOTE: This sets CAP_PROP_GAIN / EXPOSURE / BRIGHTNESS / GAMMA.
-        If you want hardware auto exposure, avoid calling this repeatedly.
-        """
         if self.cap is None:
             return
 
-        # Keep original behavior
-        self.cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
+        # Keep original behavior (best-effort on Linux)
+        self._safe_set(self.cap, cv2.CAP_PROP_AUTO_EXPOSURE, 0.75)
 
         # --- Camera-like mapping (matches apply_rolling_shutter) ---
-
-        # ISO -> gain (log mapping)
         iso_f = float(max(1, self.iso))
         t_iso = (math.log(iso_f) - math.log(50.0)) / (math.log(6400.0) - math.log(50.0))
         t_iso = max(0.0, min(1.0, t_iso))
         gain = 2.0 + t_iso * 18.0  # ~2..20
 
-        # shutter_hz -> exposure proxy (higher Hz => darker)
         sh_f = float(max(1, self.shutter_hz))
         t_sh = (math.log(sh_f) - math.log(5.0)) / (math.log(6000.0) - math.log(5.0))
         t_sh = max(0.0, min(1.0, t_sh))
@@ -329,7 +321,6 @@ class Camera:
         brightness = 95.0 + (1.0 - t_sh) * 15.0
         brightness_scale = brightness / 100.0
 
-        # --- OOK stripe model (row-time based) ---
         led_freq_hz = 2000
         duty = 0.5
         contrast = 0.90
@@ -348,17 +339,17 @@ class Camera:
         else:
             self._ook_row_gain = None
 
-        # Apply what the camera can accept (global controls)
-        self.cap.set(cv2.CAP_PROP_GAIN, float(gain))
-        self.cap.set(cv2.CAP_PROP_EXPOSURE, float(exposure))
+        # ---- COMPATIBILITY: set properties best-effort ----
+        self._safe_set(self.cap, cv2.CAP_PROP_GAIN, float(gain))
+        self._safe_set(self.cap, cv2.CAP_PROP_EXPOSURE, float(exposure))
 
         brightness_prop = BASE_BRIGHTNESS + 0.5 * (brightness_scale - 1.0)
         brightness_prop = max(0.0, min(1.0, brightness_prop))
-        self.cap.set(cv2.CAP_PROP_BRIGHTNESS, float(brightness_prop))
+        self._safe_set(self.cap, cv2.CAP_PROP_BRIGHTNESS, float(brightness_prop))
 
         gamma = 1.0 / max(0.1, exposure_scale * brightness_scale)
         gamma = max(0.3, min(3.0, gamma))
-        self.cap.set(cv2.CAP_PROP_GAMMA, float(gamma))
+        self._safe_set(self.cap, cv2.CAP_PROP_GAMMA, float(gamma))
 
     # ---------------- Frame read ----------------
     def read(self):
@@ -371,7 +362,6 @@ class Camera:
 
         self._frame_i += 1
 
-        # 1) Apply stripe effect (rolling shutter simulation) if enabled
         if self._ook_row_gain is not None:
             if self._ook_row_gain.shape[0] != frame.shape[0]:
                 self._apply_rollingshutter()
@@ -382,11 +372,9 @@ class Camera:
                 hsv[:, :, 2] = np.clip(hsv[:, :, 2], 0, 255)
                 frame = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
-        # 2) Auto control (software AE + optional HW nudging)
         if self.auto_ae and not FORCE_DARK:
             err, sat_ratio, _ = self._auto_adjust_brightness(frame)
 
-            # Optional warmup lock (disabled in OPTION A by AE_WARMUP_FRAMES=0)
             if AE_WARMUP_FRAMES > 0 and self._frame_i >= AE_WARMUP_FRAMES:
                 self.auto_ae = False
             else:
@@ -394,14 +382,12 @@ class Camera:
                     self._ensure_hw_manual_once()
                     self._maybe_nudge_hw_exposure(err, sat_ratio)
 
-        # 3) Apply software brightness last (polish)
         if (self.brightness_mul != 1.0) and (not FORCE_DARK):
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
             hsv[:, :, 2] *= self.brightness_mul
             hsv[:, :, 2] = np.clip(hsv[:, :, 2], 0, 255)
             frame = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
 
-        # 4) HARD DARK MODE (disabled in OPTION A by FORCE_DARK=False)
         if FORCE_DARK:
             hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV).astype(np.float32)
             hsv[:, :, 2] *= float(DARK_V_MUL)
@@ -432,7 +418,12 @@ class Camera:
             return
 
         self.release_writer()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
+
+        # ---- COMPATIBILITY: handle paths without a directory (e.g., "out.mp4") ----
+        out_dir = os.path.dirname(path)
+        if out_dir:
+            os.makedirs(out_dir, exist_ok=True)
+
         self.out = cv2.VideoWriter(path, self.fourcc, fps, (self.w, self.h))
         if not self.out.isOpened():
             self.out = None
