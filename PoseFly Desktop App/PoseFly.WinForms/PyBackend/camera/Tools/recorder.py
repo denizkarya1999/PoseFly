@@ -1,4 +1,10 @@
 # ui_recorder.py
+# Changes added:
+# - Camera selection UI (dropdown) + "Refresh" button
+# - Cross-platform camera enumeration (Windows: DShow/MSMF, Linux: V4L2/Any/GStreamer)
+# - Keeps your existing “Camera Index” spinbox too (advanced/manual override)
+# - Compatibility behavior remains: only use DShow on Windows
+
 import time
 import tkinter as tk
 from tkinter import filedialog, messagebox
@@ -8,10 +14,12 @@ import math
 import numpy as np
 
 import os, sys
+import platform
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from camera import Camera
 
 DEFAULT_FPS = 60.0
+
 
 def apply_rolling_shutter(frame, iso, shutter_hz):
     h, w, _ = frame.shape
@@ -64,6 +72,74 @@ def apply_rolling_shutter(frame, iso, shutter_hz):
     return out
 
 
+def _probe_camera(index: int, backend: int) -> tuple[bool, tuple[int, int] | None]:
+    """
+    Try to open/read one frame from (index, backend).
+    Returns: (ok, (w,h) or None)
+    """
+    cap = None
+    try:
+        cap = cv2.VideoCapture(int(index), int(backend))
+        if not cap.isOpened():
+            return False, None
+        ok, frame = cap.read()
+        if not ok or frame is None:
+            return False, None
+        h, w = frame.shape[:2]
+        return True, (w, h)
+    except Exception:
+        return False, None
+    finally:
+        try:
+            if cap is not None:
+                cap.release()
+        except Exception:
+            pass
+
+
+def list_available_cameras(max_index: int = 10) -> list[dict]:
+    """
+    Cross-platform camera enumeration using OpenCV probing.
+    Returns list of dicts: {"index": i, "label": "...", "backend": backend_int}
+    """
+    sysname = platform.system()
+
+    # Try multiple backends for discovery (ordered by what usually works best)
+    if sysname == "Windows":
+        backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
+        backend_names = {
+            cv2.CAP_DSHOW: "DShow",
+            cv2.CAP_MSMF: "MSMF",
+            cv2.CAP_ANY: "Any",
+        }
+    else:
+        backends = [cv2.CAP_V4L2, cv2.CAP_ANY, cv2.CAP_GSTREAMER]
+        backend_names = {
+            cv2.CAP_V4L2: "V4L2",
+            cv2.CAP_ANY: "Any",
+            cv2.CAP_GSTREAMER: "GStreamer",
+        }
+
+    found = []
+    seen_indices = set()
+
+    # Probe indices; first successful backend "claims" that index for the dropdown
+    for i in range(0, max_index + 1):
+        if i in seen_indices:
+            continue
+        for b in backends:
+            ok, wh = _probe_camera(i, b)
+            if ok:
+                seen_indices.add(i)
+                w_h_str = f"{wh[0]}x{wh[1]}" if wh else "?"
+                bname = backend_names.get(b, str(b))
+                label = f"Camera {i}  ({bname}, {w_h_str})"
+                found.append({"index": i, "label": label, "backend": b})
+                break
+
+    return found
+
+
 class RecorderUI:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -80,45 +156,62 @@ class RecorderUI:
         # preview bookkeeping
         self._tk_img = None
 
+        # camera list state
+        self._cams = []
+        self._cam_label_to_index = {}
+
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
+
+        # Initial camera scan
+        self.refresh_cameras()
 
     def _build_ui(self):
         panel = tk.Frame(self.root)
         panel.pack(fill="x", padx=10, pady=10)
 
-        # Camera index
-        tk.Label(panel, text="Camera Index:").grid(row=0, column=0, sticky="w")
+        # --- Camera selection dropdown (NEW) ---
+        tk.Label(panel, text="Camera:").grid(row=0, column=0, sticky="w")
+        self.cam_choice_var = tk.StringVar(value="(scan to list cameras)")
+        self.cam_dropdown = tk.OptionMenu(panel, self.cam_choice_var, "(scan to list cameras)")
+        self.cam_dropdown.config(width=28)
+        self.cam_dropdown.grid(row=0, column=1, sticky="w", padx=6)
+
+        self.btn_refresh = tk.Button(panel, text="Refresh", command=self.refresh_cameras)
+        self.btn_refresh.grid(row=0, column=2, padx=8)
+
+        # Manual camera index (kept; useful when dropdown misses a device)
+        tk.Label(panel, text="Camera Index:").grid(row=1, column=0, sticky="w", pady=(6, 0))
         self.cam_index_var = tk.IntVar(value=0)
-        tk.Spinbox(panel, from_=0, to=10, width=5, textvariable=self.cam_index_var)\
-            .grid(row=0, column=1, sticky="w", padx=6)
+        tk.Spinbox(panel, from_=0, to=20, width=5, textvariable=self.cam_index_var)\
+            .grid(row=1, column=1, sticky="w", padx=6, pady=(6, 0))
 
         self.btn_open = tk.Button(panel, text="Open Camera", command=self.open_camera)
-        self.btn_open.grid(row=0, column=2, padx=8)
+        self.btn_open.grid(row=1, column=2, padx=8, pady=(6, 0))
 
         self.btn_close = tk.Button(panel, text="Close Camera", command=self.close_camera, state="disabled")
-        self.btn_close.grid(row=0, column=3)
+        self.btn_close.grid(row=1, column=3, pady=(6, 0))
 
         # ISO (typed)
-        tk.Label(panel, text="ISO:").grid(row=1, column=0, sticky="w", pady=(10, 0))
+        tk.Label(panel, text="ISO:").grid(row=2, column=0, sticky="w", pady=(10, 0))
         self.iso_var = tk.StringVar(value=str(self.cam.iso))
         self.iso_entry = tk.Entry(panel, textvariable=self.iso_var, width=12)
-        self.iso_entry.grid(row=1, column=1, sticky="w", pady=(10, 0))
+        self.iso_entry.grid(row=2, column=1, sticky="w", pady=(10, 0))
 
         # Shutter Hz (typed)
-        tk.Label(panel, text="Shutter (Hz):").grid(row=2, column=0, sticky="w")
+        tk.Label(panel, text="Shutter (Hz):").grid(row=3, column=0, sticky="w")
         self.shutter_var = tk.StringVar(value=str(self.cam.shutter_hz))
         self.shutter_entry = tk.Entry(panel, textvariable=self.shutter_var, width=12)
-        self.shutter_entry.grid(row=2, column=1, sticky="w")
+        self.shutter_entry.grid(row=3, column=1, sticky="w")
 
         # Apply button
         self.btn_apply_rs = tk.Button(panel, text="Apply ISO/Hz", command=self.apply_rs, state="disabled")
-        self.btn_apply_rs.grid(row=1, column=2, rowspan=2, padx=8, sticky="ns")
+        self.btn_apply_rs.grid(row=2, column=2, rowspan=2, padx=8, sticky="ns")
 
         # FPS (typed)
-        tk.Label(panel, text="Record FPS:").grid(row=3, column=0, sticky="w", pady=(8, 0))
+        tk.Label(panel, text="Record FPS:").grid(row=4, column=0, sticky="w", pady=(8, 0))
         self.fps_var = tk.StringVar(value=str(self.fps))
-        tk.Entry(panel, textvariable=self.fps_var, width=12).grid(row=3, column=1, sticky="w", pady=(8, 0))
+        tk.Entry(panel, textvariable=self.fps_var, width=12).grid(row=4, column=1, sticky="w", pady=(8, 0))
 
         # Output path
         out_row = tk.Frame(self.root)
@@ -153,6 +246,40 @@ class RecorderUI:
         self.preview = tk.Label(self.root)
         self.preview.pack(padx=10, pady=10)
 
+    # ---------------- Camera list UI (NEW) ----------------
+    def refresh_cameras(self):
+        try:
+            self.status.config(text="Status: Scanning cameras...")
+            self.root.update_idletasks()
+
+            cams = list_available_cameras(max_index=20)
+            self._cams = cams
+            self._cam_label_to_index = {c["label"]: c["index"] for c in cams}
+
+            menu = self.cam_dropdown["menu"]
+            menu.delete(0, "end")
+
+            if not cams:
+                self.cam_choice_var.set("(no cameras found)")
+                menu.add_command(
+                    label="(no cameras found)",
+                    command=lambda: self.cam_choice_var.set("(no cameras found)")
+                )
+                self.status.config(text="Status: No cameras found (try manual index / permissions).")
+                return
+
+            # populate menu
+            for c in cams:
+                lbl = c["label"]
+                menu.add_command(label=lbl, command=lambda v=lbl: self.cam_choice_var.set(v))
+
+            # select first by default
+            self.cam_choice_var.set(cams[0]["label"])
+            self.cam_index_var.set(int(cams[0]["index"]))
+            self.status.config(text=f"Status: Found {len(cams)} camera(s).")
+        except Exception as e:
+            self.status.config(text=f"Status: Camera scan error: {e}")
+
     # ---------------- Helpers ----------------
     def _get_iso_shz(self):
         iso = int(float(self.iso_var.get()))
@@ -161,13 +288,29 @@ class RecorderUI:
         shz = max(5.0, min(6000.0, shz))
         return iso, shz
 
+    def _selected_camera_index(self) -> int:
+        """
+        If dropdown matches, use that index; otherwise fall back to Spinbox.
+        Also sync spinbox when a dropdown choice exists.
+        """
+        choice = self.cam_choice_var.get()
+        if choice in self._cam_label_to_index:
+            idx = int(self._cam_label_to_index[choice])
+            self.cam_index_var.set(idx)
+            return idx
+        return int(self.cam_index_var.get())
+
     # ---------------- Camera controls ----------------
     def open_camera(self):
         try:
-            idx = int(self.cam_index_var.get())
-            self.cam.open(camera_index=idx, use_dshow=True)
+            idx = self._selected_camera_index()
+
+            # ---- COMPATIBILITY: only use DShow on Windows ----
+            use_dshow = (platform.system() == "Windows")
+            self.cam.open(camera_index=idx, use_dshow=use_dshow)
+
             self.cam.apply_led_settings()
-            self.apply_rs()  # apply typed values to camera properties
+            self.apply_rs()
         except Exception as e:
             messagebox.showerror("Camera Error", str(e))
             return
@@ -176,7 +319,9 @@ class RecorderUI:
         self.btn_close.config(state="normal")
         self.btn_apply_rs.config(state="normal")
         self.btn_start.config(state="normal" if self.output_path else "disabled")
-        self.status.config(text="Status: Camera opened")
+        self.btn_refresh.config(state="disabled")
+        self.cam_dropdown.config(state="disabled")
+        self.status.config(text=f"Status: Camera opened (index={idx})")
         self._update_loop()
 
     def close_camera(self):
@@ -186,6 +331,8 @@ class RecorderUI:
         self.btn_close.config(state="disabled")
         self.btn_apply_rs.config(state="disabled")
         self.btn_start.config(state="disabled")
+        self.btn_refresh.config(state="normal")
+        self.cam_dropdown.config(state="normal")
         self.status.config(text="Status: Camera closed")
 
     def apply_rs(self):
@@ -219,7 +366,6 @@ class RecorderUI:
             if not self.output_path:
                 return
 
-        # Validate FPS
         try:
             fps = float(self.fps_var.get())
             if fps <= 0:
@@ -238,7 +384,6 @@ class RecorderUI:
     def stop_recording(self):
         self.record_enabled = False
         try:
-            # Force writer to release by calling write_if_enabled with enabled=False
             self.cam.write_if_enabled(None, False, self.output_path, self.fps)
         except Exception:
             pass
@@ -260,7 +405,6 @@ class RecorderUI:
             self.root.after(30, self._update_loop)
             return
 
-        # Apply rolling shutter effect to the frame (preview + recording)
         if self.use_rs_var.get():
             try:
                 iso, shz = self._get_iso_shz()
@@ -268,7 +412,6 @@ class RecorderUI:
             except Exception:
                 pass
 
-        # Write using your compatible API
         try:
             self.cam.write_if_enabled(frame, self.record_enabled, self.output_path, self.fps)
         except Exception as e:
@@ -278,11 +421,9 @@ class RecorderUI:
             self.btn_choose.config(state="normal")
             self.btn_start.config(state="normal")
 
-        # Preview
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         img = Image.fromarray(rgb)
 
-        # fit into UI
         max_w, max_h = 960, 540
         iw, ih = img.size
         scale = min(max_w / iw, max_h / ih, 1.0)
