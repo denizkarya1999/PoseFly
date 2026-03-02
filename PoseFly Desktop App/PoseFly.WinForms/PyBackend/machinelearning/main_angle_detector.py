@@ -1,9 +1,29 @@
 ﻿from pathlib import Path
+import sys
 import numpy as np
 from ultralytics import YOLO
 import cv2
 import math
 
+import pathlib, os
+if os.name == "nt":
+    pathlib.PosixPath = pathlib.WindowsPath
+
+# Ensure models/ is on sys.path (YOLO YAML safe)
+MODELS_DIR = Path(__file__).parent / "models/OutDoorModels/Modules"
+
+if str(MODELS_DIR) not in sys.path:
+    sys.path.insert(0, str(MODELS_DIR))
+
+# Import + register LSA for Ultralytics YAML
+from LSA import LSA
+from SE import SE
+
+import ultralytics.nn.tasks as tasks
+tasks.LSA = LSA
+tasks.SE = SE
+
+# Labels for each angle.
 ANGLE_LABELS = ["0_360", "45", "90", "135", "180", "225", "270", "315"]
 
 # Rolling-shutter configuration
@@ -62,7 +82,7 @@ def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     return out
 
 class AngleDetector:
-    def __init__(self, model_path="models/Posefly_Angle.pt"):
+    def __init__(self, model_path="models/OutdoorModels/PoseFly_Outdoor_Angle_Detection_YOLO_v26m_with_Self_Attention_and_C3K2_SA.pt"):
         model_path = Path(__file__).parent / model_path
         self.model = YOLO(model_path)
 

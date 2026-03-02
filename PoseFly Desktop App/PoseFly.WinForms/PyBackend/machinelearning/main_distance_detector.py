@@ -9,16 +9,18 @@ if os.name == "nt":
     pathlib.PosixPath = pathlib.WindowsPath
 
 # Ensure models/ is on sys.path (YOLO YAML safe)
-MODELS_DIR = Path(__file__).parent / "models"
+MODELS_DIR = Path(__file__).parent / "models/OutDoorModels/Modules"
 
 if str(MODELS_DIR) not in sys.path:
     sys.path.insert(0, str(MODELS_DIR))
 
 # Import + register LSA for Ultralytics YAML
 from LSA import LSA
+from SE import SE
 
 import ultralytics.nn.tasks as tasks
-tasks.LSA = LSA  # <-- allows YAML to resolve "LSA"
+tasks.LSA = LSA
+tasks.SE = SE
 
 # --------------------------------------------------
 # YOLO import
@@ -85,7 +87,7 @@ def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     return out
 
 class DistanceDetector:
-    def __init__(self, model_path="models/Posefly_Distance.pt"):
+    def __init__(self, model_path="models/OutdoorModels/PoseFly_Outdoor_Distance_Detection_YOLO_v26m_with_Self_Attention_and_C3K2_SA.pt"):
         model_path = Path(__file__).parent / model_path
         self.model = YOLO(model_path)
 
