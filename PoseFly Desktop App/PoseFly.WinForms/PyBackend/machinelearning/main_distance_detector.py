@@ -30,8 +30,8 @@ from ultralytics import YOLO
 DISTANCE_LABELS = ["1m", "2m", "3m", "4m", "5m"]
 
 # Rolling-shutter configuration
-ISO = 1100
-SHUTTER_HZ = 4000
+ISO = 1000
+SHUTTER_HZ = 6000
 
 import cv2
 

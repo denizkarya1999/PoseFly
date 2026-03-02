@@ -52,7 +52,7 @@ class DroneDetector:
 
     def detect(self, frame, conf_threshold=0.1, iou=0.7, return_preprocessed=False):
         # Apply resize-fill preprocessing (optional)
-        #frame = self.resize_fill_512(frame)
+        frame = self.resize_fill_512(frame)
 
         # Run inference
         result = self.model.predict(

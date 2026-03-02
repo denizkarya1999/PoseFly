@@ -27,8 +27,8 @@ tasks.SE = SE
 ANGLE_LABELS = ["0_360", "45", "90", "135", "180", "225", "270", "315"]
 
 # Rolling-shutter configuration
-ISO = 100
-SHUTTER_HZ = 3000
+ISO = 1000
+SHUTTER_HZ = 6000
 
 def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):
     h, w, _ = frame.shape

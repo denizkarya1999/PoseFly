@@ -27,7 +27,7 @@ tasks.SE = SE
 LED_LABELS = ["0001", "0101", "1110", "1001"]
 
 # Rolling-shutter configuration
-ISO = 800
+ISO = 1000
 SHUTTER_HZ = 6000
 
 def apply_rolling_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ):

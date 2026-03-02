@@ -17,11 +17,11 @@ if str(MODELS_DIR) not in sys.path:
 
 # Import + register LSA for Ultralytics YAML
 from LSA import LSA
-from SE import SE
+from SE import SA
 
 import ultralytics.nn.tasks as tasks
 tasks.LSA = LSA
-tasks.SE = SE
+tasks.SA = SA
 
 SPEED_LABELS = ["Fast", "Slow", "Static"]
 
@@ -90,10 +90,10 @@ class SpeedDetector:
         frame = apply_rolling_shutter(frame)
 
         # Resize to model input resolution
-        frame_640 = cv2.resize(frame, (640, 640), interpolation=cv2.INTER_LINEAR)
+        #frame_640 = cv2.resize(frame, (640, 640), interpolation=cv2.INTER_LINEAR)
 
         r = self.model.predict(
-            frame_640,
+            frame,
             verbose=False,
             conf=conf,
             iou=iou,
