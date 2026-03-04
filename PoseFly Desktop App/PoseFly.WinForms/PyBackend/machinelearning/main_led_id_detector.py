@@ -24,7 +24,7 @@ tasks.LSA = LSA
 tasks.SE = SE
 
 # Labels for each LED
-LED_LABELS = ["0001", "0101", "1110", "1001"]
+LED_LABELS = ["0001", "0101", "1001", "1110"]
 
 # Rolling-shutter configuration
 ISO = 1000

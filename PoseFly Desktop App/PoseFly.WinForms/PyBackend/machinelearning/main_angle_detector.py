@@ -24,7 +24,7 @@ tasks.LSA = LSA
 tasks.SE = SE
 
 # Labels for each angle.
-ANGLE_LABELS = ["0_360", "45", "90", "135", "180", "225", "270", "315"]
+ANGLE_LABELS = ["0_360", "135", "180", "225", "270", "315", "45", "90"]
 
 # Rolling-shutter configuration
 ISO = 1000

@@ -17,11 +17,11 @@ if str(MODELS_DIR) not in sys.path:
 
 # Import + register LSA for Ultralytics YAML
 from LSA import LSA
-from SE import SA
+from SE import SE
 
 import ultralytics.nn.tasks as tasks
 tasks.LSA = LSA
-tasks.SA = SA
+tasks.SA = SE
 
 SPEED_LABELS = ["Fast", "Slow", "Static"]
 
