@@ -1,27 +1,14 @@
-# posefly_gui.py
-# Tkinter GUI that directly uses PipelineBackend (no localhost / sockets / base64).
-# Includes:
-# - Window icon (PoseFly.ico) with Windows iconbitmap + Linux iconphoto fallback (ICO->PNG temp conversion)
-# - Camera selection dropdown + Refresh button (plus manual index spinbox)
-# - Start/Stop pipeline
-# - Live preview
-# - (Windows-only) DirectShow toggle
-# - FPS + output path + Save video checkbox
-# - Vision toggles (drone/angle/distance/led/speed)
-# - Rolling shutter UI + AUTO-APPLY (debounced + periodic re-apply while running)
-# - IMPORTANT: GUI applies a *software rolling shutter effect* on frames (preview + saved video)
-#   because your camera.py has ENABLE_ROLLING_SHUTTER=False which makes Camera.rollingshutter()
-#   a no-op for the stripe effect. The GUI-side effect always works.
-
 import os
+import sys
 import time
 import threading
 import platform
 import traceback
 import math
 import tempfile
+import subprocess
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 import cv2
 import numpy as np
@@ -30,6 +17,62 @@ from PIL import Image, ImageTk
 from backend import PipelineBackend
 
 ICON_PATH = "/home/denizkaryaacikbas/StudioProjects/PoseFly/PoseFly Desktop App/PoseFly.WinForms/assets/PoseFly.png"
+
+
+# ---------------------------
+# Results-only logging
+# ---------------------------
+class ResultsOnlyLogger:
+    """
+    Redirects sys.stdout to a file but only writes lines that look like:
+      Iteration-123: ...
+    Everything else is dropped.
+    """
+
+    def __init__(self, file_path: str, keep_console: bool = True):
+        self.file_path = file_path
+        self.file = open(file_path, "w", encoding="utf-8")
+        self._stdout = sys.stdout
+        self.keep_console = keep_console
+        self._buf = ""
+
+    def write(self, s: str):
+        if self.keep_console:
+            self._stdout.write(s)
+
+        self._buf += s
+        while "\n" in self._buf:
+            line, self._buf = self._buf.split("\n", 1)
+            line = line.rstrip("\r")
+            if line.startswith("Iteration-"):
+                self.file.write(line + "\n")
+                self.file.flush()
+
+    def flush(self):
+        if self.keep_console:
+            self._stdout.flush()
+        self.file.flush()
+
+    def close(self):
+        if self._buf.strip().startswith("Iteration-"):
+            self.file.write(self._buf.strip() + "\n")
+        self.file.flush()
+        self.file.close()
+
+
+def make_results_log_path(output_path: str) -> str:
+    """
+    Build a results-only txt path from the chosen output path.
+    Example:
+      results/video.mp4 -> results/video_results_only.txt
+    """
+    if output_path and str(output_path).strip():
+        base, _ = os.path.splitext(output_path)
+        return base + "_results_only.txt"
+
+    # fallback if no output video path is used
+    ts = time.strftime("%Y%m%d_%H%M%S")
+    return os.path.join("results", f"posefly_live_{ts}_results_only.txt")
 
 
 def clamp_int(x, lo, hi, default):
@@ -174,6 +217,10 @@ class PoseFlyGUI:
         self._cams = []
         self._cam_label_to_index = {}
 
+        # Results logging / trajectory
+        self._results_log_path = None
+        self._trajectory_launched = False
+
         # UI state
         self.cam_choice_var = tk.StringVar(value="(scan to list cameras)")
         self.cam_index_var = tk.IntVar(value=0)
@@ -211,10 +258,8 @@ class PoseFlyGUI:
                 self.root.iconbitmap(ICON_PATH)
                 return
 
-            # Linux/others: convert ICO -> temp PNG then iconphoto (most reliable)
             img = Image.open(ICON_PATH)
 
-            # Create a temp png file to load via tk.PhotoImage
             fd, tmp_png = tempfile.mkstemp(suffix=".png")
             os.close(fd)
             self._tmp_icon_png = tmp_png
@@ -412,6 +457,37 @@ class PoseFlyGUI:
         self._apply_rs_if_changed(force=True)
 
     # --------------------------------------------------------
+    # Trajectory launcher
+    # --------------------------------------------------------
+    def _launch_trajectory_algorithm(self, log_file_path: str):
+        if self._trajectory_launched:
+            return
+
+        if not log_file_path or not os.path.exists(log_file_path):
+            self._set_status_threadsafe("Status: Trajectory skipped (log file not found).")
+            return
+
+        if os.path.getsize(log_file_path) <= 0:
+            self._set_status_threadsafe("Status: Trajectory skipped (log file is empty).")
+            return
+
+        here = os.path.dirname(os.path.abspath(__file__))
+        trajectory_script = os.path.join(here, "videoprocessing", "tools", "trajectory_algorithm.py")
+
+        if not os.path.isfile(trajectory_script):
+            self._set_status_threadsafe(f"Status: Trajectory script not found: {trajectory_script}")
+            return
+
+        cmd = [sys.executable, trajectory_script, log_file_path]
+
+        try:
+            subprocess.Popen(cmd)
+            self._trajectory_launched = True
+            self._set_status_threadsafe("Status: Stopped | Trajectory launched")
+        except Exception as e:
+            self._set_status_threadsafe(f"Status: Failed to launch trajectory: {e}")
+
+    # --------------------------------------------------------
     # Run pipeline
     # --------------------------------------------------------
     def start(self):
@@ -431,6 +507,12 @@ class PoseFlyGUI:
         iso, shz = self._read_rs_inputs()
         self._rs_iso_cached, self._rs_shz_cached = iso, shz
 
+        # Prepare results-only log path
+        self._results_log_path = make_results_log_path(out_path)
+        self._trajectory_launched = False
+
+        os.makedirs(os.path.dirname(self._results_log_path) or ".", exist_ok=True)
+
         self._running = True
         self._frame_count = 0
         self._last_rs_applied = (None, None)
@@ -440,11 +522,11 @@ class PoseFlyGUI:
         self.btn_apply_rs.config(state="normal")
         self.btn_refresh.config(state="disabled")
         self.cam_dropdown.config(state="disabled")
-        self.status.config(text="Status: Starting...")
+        self.status.config(text=f"Status: Starting... | Log: {self._results_log_path}")
 
         self._thread = threading.Thread(
             target=self._pipeline_loop,
-            args=(cam_idx, use_dshow, fps, out_path, save_video),
+            args=(cam_idx, use_dshow, fps, out_path, save_video, self._results_log_path),
             daemon=True,
         )
         self._thread.start()
@@ -453,7 +535,18 @@ class PoseFlyGUI:
         self._running = False
         self.status.config(text="Status: Stopping...")
 
-    def _pipeline_loop(self, cam_idx, use_dshow, fps, out_path, save_video):
+    def _pipeline_loop(self, cam_idx, use_dshow, fps, out_path, save_video, results_log_path):
+        old_stdout = sys.stdout
+        results_logger = None
+
+        try:
+            results_logger = ResultsOnlyLogger(results_log_path, keep_console=True)
+            sys.stdout = results_logger
+        except Exception as e:
+            sys.stdout = old_stdout
+            self._set_status_threadsafe(f"Status: WARN could not start results logger: {e}")
+            results_logger = None
+
         try:
             self.backend.open_camera(camera_index=cam_idx, use_dshow=use_dshow)
             self.backend.apply_camera_settings_led_id()
@@ -462,76 +555,104 @@ class PoseFlyGUI:
             self._set_status_threadsafe(f"Status: Camera ERROR: {e}")
             self._running = False
             self._set_buttons_threadsafe(False)
+            if results_logger is not None:
+                try:
+                    sys.stdout = old_stdout
+                    results_logger.close()
+                except Exception:
+                    pass
             return
 
         self.root.after(0, lambda: self._apply_rs_if_changed(force=True))
         target_dt = 1.0 / max(fps, 1.0)
 
-        while self._running:
-            t0 = time.time()
-            try:
-                ok, frame = self.backend.read_frame()
-                if not ok or frame is None:
-                    self._set_status_threadsafe("Status: ERROR failed to read frame")
+        try:
+            while self._running:
+                t0 = time.time()
+                try:
+                    ok, frame = self.backend.read_frame()
+                    if not ok or frame is None:
+                        self._set_status_threadsafe("Status: ERROR failed to read frame")
+                        break
+
+                    self._frame_count += 1
+
+                    # periodic backend apply (in case camera resets)
+                    if (self._frame_count % 30) == 0:
+                        self.root.after(0, lambda: self._apply_rs_if_changed(force=True))
+
+                    toggles = {
+                        "drone": bool(self.tog_drone.get()),
+                        "angle": bool(self.tog_angle.get()),
+                        "distance": bool(self.tog_distance.get()),
+                        "led": bool(self.tog_led.get()),
+                        "speed": bool(self.tog_speed.get()),
+                    }
+                    out = self.backend.process_frame(frame, toggles)
+                    if isinstance(out, np.ndarray):
+                        frame = out
+                    elif isinstance(out, tuple) and len(out) == 2 and isinstance(out[1], np.ndarray):
+                        frame = out[1]
+
+                    # GUI rolling shutter effect
+                    if self.use_rs_var.get():
+                        frame = apply_rolling_shutter(frame, self._rs_iso_cached, self._rs_shz_cached)
+
+                    if save_video:
+                        try:
+                            self.backend.write_frame_if_enabled(frame, True, out_path, fps)
+                        except Exception as e:
+                            save_video = False
+                            self._set_status_threadsafe(f"Status: WARN writer disabled: {e}")
+                            try:
+                                self.backend.release_writer()
+                            except Exception:
+                                pass
+
+                    self._show_frame_threadsafe(frame)
+
+                except Exception as e:
+                    print(traceback.format_exc())
+                    self._set_status_threadsafe(f"Status: ERROR {e}")
                     break
 
-                self._frame_count += 1
+                dt = time.time() - t0
+                if dt < target_dt:
+                    time.sleep(target_dt - dt)
 
-                # periodic backend apply (in case camera resets)
-                if (self._frame_count % 30) == 0:
-                    self.root.after(0, lambda: self._apply_rs_if_changed(force=True))
+        finally:
+            try:
+                self.backend.release_camera()
+            except Exception:
+                pass
+            try:
+                self.backend.release_writer()
+            except Exception:
+                pass
 
-                toggles = {
-                    "drone": bool(self.tog_drone.get()),
-                    "angle": bool(self.tog_angle.get()),
-                    "distance": bool(self.tog_distance.get()),
-                    "led": bool(self.tog_led.get()),
-                    "speed": bool(self.tog_speed.get()),
-                }
-                out = self.backend.process_frame(frame, toggles)
-                if isinstance(out, np.ndarray):
-                    frame = out
-                elif isinstance(out, tuple) and len(out) == 2 and isinstance(out[1], np.ndarray):
-                    frame = out[1]
+            try:
+                sys.stdout = old_stdout
+            except Exception:
+                pass
 
-                # GUI rolling shutter effect
-                if self.use_rs_var.get():
-                    frame = apply_rolling_shutter(frame, self._rs_iso_cached, self._rs_shz_cached)
-
-                if save_video:
-                    try:
-                        self.backend.write_frame_if_enabled(frame, True, out_path, fps)
-                    except Exception as e:
-                        save_video = False
-                        self._set_status_threadsafe(f"Status: WARN writer disabled: {e}")
-                        try:
-                            self.backend.release_writer()
-                        except Exception:
-                            pass
-
-                self._show_frame_threadsafe(frame)
-
-            except Exception as e:
-                print(traceback.format_exc())
-                self._set_status_threadsafe(f"Status: ERROR {e}")
-                break
-
-            dt = time.time() - t0
-            if dt < target_dt:
-                time.sleep(target_dt - dt)
-
-        try:
-            self.backend.release_camera()
-        except Exception:
-            pass
-        try:
-            self.backend.release_writer()
-        except Exception:
-            pass
+            try:
+                if results_logger is not None:
+                    results_logger.close()
+            except Exception:
+                pass
 
         self._running = False
         self._set_buttons_threadsafe(False)
-        self._set_status_threadsafe("Status: Stopped")
+
+        # Launch trajectory once after inference fully stops
+        try:
+            self._launch_trajectory_algorithm(results_log_path)
+        except Exception as e:
+            self._set_status_threadsafe(f"Status: Stopped | Trajectory launch error: {e}")
+            return
+
+        if not self._trajectory_launched:
+            self._set_status_threadsafe("Status: Stopped")
 
     # --------------------------------------------------------
     # Thread-safe UI helpers

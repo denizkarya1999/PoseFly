@@ -225,13 +225,11 @@ def main():
     out_path = make_output_path(video_path)
     results_log_path = make_results_log_path(video_path)
 
-    # ---- Redirect stdout to results-only logger (still keep console prints) ----
     old_stdout = sys.stdout
     results_logger = ResultsOnlyLogger(results_log_path, keep_console=True)
     sys.stdout = results_logger
 
     pipeline = ComputerVision()
-
     toggles = {"drone": True, "angle": True, "distance": True, "led": True, "speed": True}
 
     writer, actual_out_path = try_create_writer(out_path, fps, w, h)
@@ -257,8 +255,6 @@ def main():
             if not ok:
                 break
 
-            # ---- This will print Iteration-... lines inside ComputerVision,
-            #      which WILL be captured into results_log_path.
             out_frame = pipeline.process(frame, toggles)
 
             if out_frame.shape[1] != w or out_frame.shape[0] != h:
@@ -281,6 +277,16 @@ def main():
     print(f"Done. Saved processed video. Frames written: {frame_idx}")
     print(f"Results-only log saved to: {results_log_path}")
     ui.done(actual_out_path, frame_idx)
+
+    # Run trajectory algorithm once after inference finishes
+    try:
+        pipeline.run_trajectory_algorithm(
+            wait=False,
+            log_file_path=results_log_path
+        )
+        print("Launched trajectory_algorithm.py")
+    except Exception as e:
+        print(f"Could not launch trajectory_algorithm.py: {e}")
 
 
 if __name__ == "__main__":

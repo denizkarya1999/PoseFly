@@ -1,6 +1,9 @@
 ﻿# computer_vision.py
 import time
 import cv2
+import os
+import sys
+import subprocess
 
 # Individual perception modules
 from machinelearning.main_drone_detector import DroneDetector
@@ -8,6 +11,7 @@ from machinelearning.main_angle_detector import AngleDetector
 from machinelearning.main_distance_detector import DistanceDetector
 from machinelearning.main_led_id_detector import LEDDetector
 from machinelearning.main_speed_detector import SpeedDetector
+
 
 class ComputerVision:
     def __init__(self):
@@ -27,6 +31,9 @@ class ComputerVision:
         self.run_submodels_on_full_frame_when_no_drone = True
 
         self._iter = 0
+
+        # Prevent accidental multiple launches
+        self._trajectory_already_run = False
 
     def _should_log_now(self) -> bool:
         """Return True if enough time has passed to print logs."""
@@ -172,6 +179,44 @@ class ComputerVision:
             y_text += (line_h + pad_y)
 
         return frame_bgr
+
+    # ---------- Trajectory launcher ----------
+
+    def run_trajectory_algorithm(self, wait=False, log_file_path=None):
+        """
+        Run trajectory_algorithm.py once after inference finishes.
+
+        Args:
+            wait: if True, block until script exits
+            log_file_path: optional txt file path to pass to trajectory_algorithm.py
+        """
+        if self._trajectory_already_run:
+            print("trajectory_algorithm.py was already launched once. Skipping.")
+            return
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        tools_dir = os.path.join(current_dir, "tools")
+        trajectory_script = os.path.join(tools_dir, "trajectory_algorithm.py")
+
+        if not os.path.isfile(trajectory_script):
+            print(f"Trajectory script not found: {trajectory_script}")
+            return
+
+        cmd = [sys.executable, trajectory_script]
+
+        # Optional: pass log file path if your trajectory script supports argv
+        if log_file_path:
+            cmd.append(log_file_path)
+
+        try:
+            print(f"Launching trajectory algorithm: {' '.join(cmd)}")
+            if wait:
+                subprocess.run(cmd, check=True)
+            else:
+                subprocess.Popen(cmd)
+            self._trajectory_already_run = True
+        except Exception as e:
+            print(f"Failed to launch trajectory_algorithm.py: {e}")
 
     # ---------- Main pipeline ----------
 
