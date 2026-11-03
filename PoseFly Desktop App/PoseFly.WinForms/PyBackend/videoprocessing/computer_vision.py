@@ -7,6 +7,7 @@ import subprocess
 
 from importlib import import_module
 from machinelearning.confidence import confidence_thresholds
+from machinelearning.box_limits import box_limits
 
 # Import and load only enabled models, on the pipeline worker rather than the UI.
 DETECTORS = {
@@ -259,8 +260,10 @@ class ComputerVision:
             self.drone_profile = profile
             self.drone = self._drone_cache.get(profile)
         thresholds = confidence_thresholds(toggles.get("confidence"))
+        limits = box_limits(toggles.get("max_boxes"))
         do_log = self._should_log_now()
-        drone_out = self._detector("drone").detect(frame, conf_threshold=thresholds["drone"])
+        drone_out = self._detector("drone").detect(
+            frame, conf_threshold=thresholds["drone"], max_det=limits["drone"])
         boxes = getattr(drone_out, "boxes", None)
         if boxes is None or len(boxes) == 0:
             if on_detections is not None:
@@ -287,7 +290,7 @@ class ComputerVision:
                     # Each detector simulates its exposure on a private input.
                     # Keep the source/preview and the other model inputs intact.
                     crop = frame[y1:y2, x1:x2].copy()
-                    outputs[name] = self._detector(name).detect(crop, conf=thresholds[name])
+                    outputs[name] = self._detector(name).detect(crop, conf=thresholds[name], max_det=limits[name])
                     features[name] = self._best_item(outputs[name])
             self.last_drone_features.append(features)
             if do_log:

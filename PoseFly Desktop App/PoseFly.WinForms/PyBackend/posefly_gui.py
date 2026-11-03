@@ -17,6 +17,7 @@ from PIL import Image, ImageTk
 
 from backend import PipelineBackend
 from machinelearning.confidence import DEFAULT_CONFIDENCE, MODEL_LABELS, confidence_thresholds
+from machinelearning.box_limits import DEFAULT_MAX_BOXES, MAX_BOX_LIMIT, parse_box_limit
 from videoprocessing.computer_vision import DRONE_MODELS
 from latest_frame import LatestFrame
 from result_logging import ResultLogWriter
@@ -83,6 +84,7 @@ class PoseFlyGUI:
         self._displayed_overlay = None
         self._detections_model = None
         self._detections_confidence = None
+        self._detections_max_boxes = None
         self._detections = []
         self._features = []
         self._features_pending = False
@@ -95,8 +97,9 @@ class PoseFlyGUI:
         self._capture_wakeup = threading.Event()
         self._live_fps = 60.0
         self._fps_after_id = None
-        self._confidence_after_id = None
+        self._detection_settings_after_id = None
         self._confidence = DEFAULT_CONFIDENCE.copy()
+        self._max_boxes = DEFAULT_MAX_BOXES.copy()
         self._scan_thread = None
         self._settings = None
         self._running = False
@@ -148,6 +151,8 @@ class PoseFlyGUI:
         self.tog_speed = tk.BooleanVar(value=True)
         self.confidence_vars = {name: tk.StringVar(value=f"{value * 100:g}")
                                 for name, value in self._confidence.items()}
+        self.max_boxes_vars = {name: tk.StringVar(value=str(value))
+                               for name, value in self._max_boxes.items()}
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -357,31 +362,43 @@ class PoseFlyGUI:
         ttk.Label(detection_tab, text="All features stay visible. N/A means no estimate is available, including when a model is off or still running.",
                   style="Muted.TLabel", wraplength=300).grid(row=4, column=0, sticky="w", pady=(10, 0))
 
-        ttk.Label(detection_tab, text="Minimum confidence (%)", style="Heading.TLabel").grid(
+        ttk.Label(detection_tab, text="Model settings", style="Heading.TLabel").grid(
             row=5, column=0, sticky="w", pady=(18, 8))
         thresholds = ttk.Frame(detection_tab)
         thresholds.grid(row=6, column=0, sticky="ew")
         thresholds.columnconfigure(0, weight=1)
+        ttk.Label(thresholds, text="Model", style="Muted.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(thresholds, text="Confidence\n(%)", style="Muted.TLabel").grid(row=0, column=1, padx=(0, 10))
+        ttk.Label(thresholds, text="Max boxes", style="Muted.TLabel").grid(row=0, column=2)
         self.confidence_entries = {}
-        for row, (name, title) in enumerate(MODEL_LABELS.items()):
+        self.max_boxes_entries = {}
+        for row, (name, title) in enumerate(MODEL_LABELS.items(), start=1):
             ttk.Label(thresholds, text=title).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=5)
             variable = self.confidence_vars[name]
             entry = ttk.Spinbox(thresholds, from_=0, to=100, increment=0.1, width=8,
-                                textvariable=variable, command=self.apply_confidence)
-            entry.grid(row=row, column=1, sticky="e", pady=5)
-            entry.bind("<Return>", lambda _event: self.apply_confidence())
-            entry.bind("<FocusOut>", lambda _event: self.apply_confidence())
-            variable.trace_add("write", self._schedule_apply_confidence)
+                                textvariable=variable, command=self.apply_detection_settings)
+            entry.grid(row=row, column=1, sticky="e", padx=(0, 10), pady=5)
+            entry.bind("<Return>", lambda _event: self.apply_detection_settings())
+            entry.bind("<FocusOut>", lambda _event: self.apply_detection_settings())
+            variable.trace_add("write", self._schedule_apply_detection_settings)
             self.confidence_entries[name] = entry
-        ttk.Label(detection_tab, text="Higher values reject more predictions. Features below their threshold show N/A.",
+            box_variable = self.max_boxes_vars[name]
+            box_entry = ttk.Spinbox(thresholds, from_=1, to=MAX_BOX_LIMIT, increment=1, width=6,
+                                    textvariable=box_variable, command=self.apply_detection_settings)
+            box_entry.grid(row=row, column=2, sticky="e", pady=5)
+            box_entry.bind("<Return>", lambda _event: self.apply_detection_settings())
+            box_entry.bind("<FocusOut>", lambda _event: self.apply_detection_settings())
+            box_variable.trace_add("write", self._schedule_apply_detection_settings)
+            self.max_boxes_entries[name] = box_entry
+        ttk.Label(detection_tab, text="Drone boxes: per frame. Feature boxes: per drone; the strongest estimate is shown. These are maximums; fewer may be detected. Missing features show N/A.",
                   style="Muted.TLabel", wraplength=300).grid(row=7, column=0, sticky="w", pady=(10, 0))
-        self.confidence_status = ttk.Label(detection_actions, text="0–100% · applies live.",
+        self.detection_settings_status = ttk.Label(detection_actions, text="Changes apply live.",
                                            style="Muted.TLabel", wraplength=300)
-        self.confidence_status.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
-        self.btn_apply_confidence = ttk.Button(detection_actions, text="Apply thresholds", command=self.apply_confidence)
-        self.btn_apply_confidence.grid(row=1, column=0, sticky="ew", padx=(0, 8))
-        self.btn_reset_confidence = ttk.Button(detection_actions, text="Reset defaults", command=self.reset_confidence)
-        self.btn_reset_confidence.grid(row=1, column=1, sticky="ew")
+        self.detection_settings_status.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.btn_apply_detection_settings = ttk.Button(detection_actions, text="Apply settings", command=self.apply_detection_settings)
+        self.btn_apply_detection_settings.grid(row=1, column=0, sticky="ew", padx=(0, 8))
+        self.btn_reset_detection_settings = ttk.Button(detection_actions, text="Reset defaults", command=self.reset_detection_settings)
+        self.btn_reset_detection_settings.grid(row=1, column=1, sticky="ew")
         detection_actions.columnconfigure((0, 1), weight=1, uniform="confidence_actions")
 
         ttk.Label(recording_tab, text="Recording", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
@@ -746,17 +763,17 @@ class PoseFlyGUI:
         return True
 
     # --------------------------------------------------------
-    # Confidence thresholds (percentages in the UI, fractions for inference)
+    # Per-model confidence thresholds and maximum bounding-box counts
     # --------------------------------------------------------
-    def _schedule_apply_confidence(self, *_args):
-        if self._confidence_after_id:
-            self.root.after_cancel(self._confidence_after_id)
-        self._confidence_after_id = self.root.after(200, self.apply_confidence)
+    def _schedule_apply_detection_settings(self, *_args):
+        if self._detection_settings_after_id:
+            self.root.after_cancel(self._detection_settings_after_id)
+        self._detection_settings_after_id = self.root.after(200, self.apply_detection_settings)
 
-    def apply_confidence(self):
-        if self._confidence_after_id:
-            self.root.after_cancel(self._confidence_after_id)
-            self._confidence_after_id = None
+    def apply_detection_settings(self):
+        if self._detection_settings_after_id:
+            self.root.after_cancel(self._detection_settings_after_id)
+            self._detection_settings_after_id = None
         values = {}
         for name, variable in self.confidence_vars.items():
             try:
@@ -765,18 +782,30 @@ class PoseFlyGUI:
                     raise ValueError
                 values[name] = value / 100.0
             except (ValueError, tk.TclError):
-                self.confidence_status.configure(
-                    text=f"Enter 0–100% for {MODEL_LABELS[name]}. Keeping previous thresholds.", style="Error.TLabel")
+                self.detection_settings_status.configure(
+                    text=f"Enter 0–100% for {MODEL_LABELS[name]}. Keeping previous settings.", style="Error.TLabel")
+                return False
+        limits = {}
+        for name, variable in self.max_boxes_vars.items():
+            try:
+                limits[name] = parse_box_limit(variable.get())
+            except (ValueError, tk.TclError):
+                self.detection_settings_status.configure(
+                    text=f"{MODEL_LABELS[name]} boxes: enter a whole number, 1–{MAX_BOX_LIMIT}. Keeping previous settings.",
+                    style="Error.TLabel")
                 return False
         self._confidence = confidence_thresholds(values)
+        self._max_boxes = limits
         self._snapshot_settings()
-        self.confidence_status.configure(text="0–100% · applies live.", style="Muted.TLabel")
+        self.detection_settings_status.configure(text="Changes apply live.", style="Muted.TLabel")
         return True
 
-    def reset_confidence(self):
+    def reset_detection_settings(self):
         for name, value in DEFAULT_CONFIDENCE.items():
             self.confidence_vars[name].set(f"{value * 100:g}")
-        self.apply_confidence()
+        for name, value in DEFAULT_MAX_BOXES.items():
+            self.max_boxes_vars[name].set(str(value))
+        self.apply_detection_settings()
 
     # --------------------------------------------------------
     # Rolling shutter handling
@@ -823,7 +852,7 @@ class PoseFlyGUI:
             return
         if not self.apply_live_fps():
             return
-        if not self.apply_confidence():
+        if not self.apply_detection_settings():
             return
 
         try:
@@ -853,6 +882,7 @@ class PoseFlyGUI:
             self._display_frame = None
             self._detections_model = None
             self._detections_confidence = None
+            self._detections_max_boxes = None
             self._overlay_revision += 1
             self._detections = []
             self._features = []
@@ -891,7 +921,7 @@ class PoseFlyGUI:
             {"drone": self.tog_drone.get(), "angle": self.tog_angle.get(),
              "distance": self.tog_distance.get(), "led": self.tog_led.get(),
              "speed": self.tog_speed.get(), "drone_model": self.drone_model_var.get(),
-             "confidence": self._confidence.copy()},
+             "confidence": self._confidence.copy(), "max_boxes": self._max_boxes.copy()},
             self.use_rs_var.get(), self._rs_iso_cached, self._rs_shz_cached, self._live_fps,
         )
 
@@ -910,6 +940,7 @@ class PoseFlyGUI:
                         self._detections = list(detections)
                         self._detections_model = toggles.get("drone_model", "Indoor")
                         self._detections_confidence = toggles["confidence"]
+                        self._detections_max_boxes = toggles["max_boxes"]
                         self._overlay_revision += 1
                         self._features = []
                         self._features_pending = bool(detections)
@@ -933,6 +964,7 @@ class PoseFlyGUI:
                     self._detections = list(detections) if isinstance(detections, (list, tuple)) else []
                     self._detections_model = toggles.get("drone_model", "Indoor")
                     self._detections_confidence = toggles["confidence"]
+                    self._detections_max_boxes = toggles["max_boxes"]
                     self._overlay_revision += 1
                     features = self.backend.drone_features()
                     self._features = list(features) if isinstance(features, (list, tuple)) else []
@@ -1084,6 +1116,7 @@ class PoseFlyGUI:
             detections = self._detections
             detections_model = self._detections_model
             detections_confidence = self._detections_confidence
+            detections_max_boxes = self._detections_max_boxes
             revision = self._overlay_revision
             features = self._features
             features_pending = self._features_pending
@@ -1098,8 +1131,9 @@ class PoseFlyGUI:
         now = time.monotonic()
         if detections_model is not None and detections_model != self.drone_model_var.get():
             detections, features, captured_at = [], [], None
-        if detections_confidence is not None and detections_confidence != self._confidence:
-            # An in-flight result from older thresholds must not reappear.
+        if ((detections_confidence is not None and detections_confidence != self._confidence)
+                or (detections_max_boxes is not None and detections_max_boxes != self._max_boxes)):
+            # An in-flight result from older model settings must not reappear.
             detections, features, captured_at = [], [], None
         new_frame = frame is not None
         if new_frame:
@@ -1179,9 +1213,9 @@ class PoseFlyGUI:
         if self._fps_after_id:
             self.root.after_cancel(self._fps_after_id)
             self._fps_after_id = None
-        if self._confidence_after_id:
-            self.root.after_cancel(self._confidence_after_id)
-            self._confidence_after_id = None
+        if self._detection_settings_after_id:
+            self.root.after_cancel(self._detection_settings_after_id)
+            self._detection_settings_after_id = None
         self._wait_for_shutdown()
 
     def _wait_for_shutdown(self):

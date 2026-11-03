@@ -114,15 +114,24 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   enabled initially; disable individual
   features to reduce inference work. Turning off Drone pauses feature models too.
   Models load on demand and are reused across sessions.
-- In **Detection → Minimum confidence (%)**, set a separate threshold for
+- In **Detection → Model settings**, set a separate **Confidence (%)** for
   Drone, Angle, Distance, LED ID and Speed. Enter 0–100%; arrows, Enter, leaving
-  the field, or **Apply thresholds** apply the settings live. Typed changes also
+  the field, or **Apply settings** apply the settings live. Typed changes also
   apply after a short pause. Higher thresholds reject more predictions; feature
   estimates below their threshold show **N/A**. Results from older settings are
   hidden while the next inference completes. Invalid input keeps the last valid
   thresholds. **Reset defaults** restores Drone to 10% and each feature model
   to 0.1%, matching the previous behavior. Settings last for the current app
   session; changing them does not restart the camera or change exposure.
+- **Max boxes** beside each confidence field sets a whole-number maximum from
+  1 to 300. The Drone limit applies to the full frame and caps the drone boxes
+  shown in the preview, result table, recordings and optional logs. Each feature
+  limit applies per detected drone crop; all returned candidates are considered
+  and the strongest estimate is shown for that feature. Counts are maximums,
+  not a request to invent detections: confidence filtering may return fewer.
+  Changes apply live, with old results hidden until updated inference returns.
+  **Reset defaults** restores 300 drone boxes and one box per feature model,
+  together with the default confidence thresholds. Counts last for this session.
 - Camera capture runs separately from detection. The live preview draws recent
   drone boxes as soon as the detector returns, before feature-model loading or
   inference finishes. The latest confirmed boxes remain visible until a new
