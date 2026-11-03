@@ -1,14 +1,13 @@
 import os
-import sys
 import time
 import threading
 import platform
 import traceback
 import math
-import subprocess
 import queue
 import webbrowser
 from pathlib import Path
+from datetime import datetime, timezone
 import tkinter as tk
 from tkinter import filedialog, font as tkfont, messagebox, ttk
 
@@ -19,6 +18,7 @@ from PIL import Image, ImageTk
 from backend import PipelineBackend
 from videoprocessing.computer_vision import DRONE_MODELS
 from latest_frame import LatestFrame
+from result_logging import ResultLogWriter
 from videoprocessing.drone_overlay import draw_recent_drones, feature_values
 
 from camera.discovery import list_available_cameras
@@ -40,60 +40,9 @@ def default_output_path():
     return os.path.join("results", "posefly_results.mp4")
 
 
-# ---------------------------
-# Results-only logging
-# ---------------------------
-class ResultsOnlyLogger:
-    """
-    Redirects sys.stdout to a file but only writes lines that look like:
-      Iteration-123: ...
-    Everything else is dropped.
-    """
-
-    def __init__(self, file_path: str, keep_console: bool = True):
-        self.file_path = file_path
-        self.file = open(file_path, "w", encoding="utf-8")
-        self._stdout = sys.stdout
-        self.keep_console = keep_console
-        self._buf = ""
-
-    def write(self, s: str):
-        if self.keep_console:
-            self._stdout.write(s)
-
-        self._buf += s
-        while "\n" in self._buf:
-            line, self._buf = self._buf.split("\n", 1)
-            line = line.rstrip("\r")
-            if line.startswith("Iteration-"):
-                self.file.write(line + "\n")
-                self.file.flush()
-
-    def flush(self):
-        if self.keep_console:
-            self._stdout.flush()
-        self.file.flush()
-
-    def close(self):
-        if self._buf.strip().startswith("Iteration-"):
-            self.file.write(self._buf.strip() + "\n")
-        self.file.flush()
-        self.file.close()
-
-
-def make_results_log_path(output_path: str) -> str:
-    """
-    Build a results-only txt path from the chosen output path.
-    Example:
-      results/video.mp4 -> results/video_results_only.txt
-    """
-    if output_path and str(output_path).strip():
-        base, _ = os.path.splitext(output_path)
-        return base + "_results_only.txt"
-
-    # fallback if no output video path is used
-    ts = time.strftime("%Y%m%d_%H%M%S")
-    return os.path.join("results", f"posefly_live_{ts}_results_only.txt")
+def default_log_path():
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return str(Path(default_output_path()).parent / f"posefly_detections_{stamp}.csv")
 
 
 def clamp_int(x, lo, hi, default):
@@ -122,6 +71,7 @@ class PoseFlyGUI:
         self._set_window_icon()
 
         self.backend = PipelineBackend()
+        self.backend.cv.log_enabled = False  # Desktop result logging requires opt-in.
 
         self._closing = False
         self._events = queue.SimpleQueue()
@@ -166,9 +116,10 @@ class PoseFlyGUI:
         self._cams = []
         self._cam_label_to_index = {}
 
-        # Results logging / trajectory
-        self._results_log_path = None
-        self._trajectory_launched = False
+        self._log_writer = None
+        self._log_generation = 0
+        self._log_state = "off"
+        self._log_rows = 0
 
         # UI state
         self.cam_choice_var = tk.StringVar(value="(scan to list cameras)")
@@ -179,6 +130,7 @@ class PoseFlyGUI:
         self.live_fps_var = tk.StringVar(value="60")
         self.save_var = tk.BooleanVar(value=True)
         self.out_path_var = tk.StringVar(value=default_output_path())
+        self.log_path_var = tk.StringVar(value=default_log_path())
 
         self.iso_var = tk.StringVar(value="250")
         self.shutter_var = tk.StringVar(value="1000")
@@ -331,6 +283,7 @@ class PoseFlyGUI:
         # that could push its model switches below the visible viewport.
         detection_actions.grid_remove()
         recording_tab, recording_actions = self._add_settings_page("Recording")
+        logging_tab, logging_actions = self._add_settings_page("Logs")
 
         ttk.Label(camera_tab, text="Camera source", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         self.cam_dropdown = ttk.Combobox(camera_tab, textvariable=self.cam_choice_var, state="readonly", width=25)
@@ -416,6 +369,24 @@ class PoseFlyGUI:
         ttk.Label(recording_tab, text="Set these before starting. Recordings contain the analyzed frames and their labels.",
                   style="Muted.TLabel", wraplength=300).grid(row=6, column=0, sticky="w", pady=(14, 0))
 
+        ttk.Label(logging_tab, text="Detection log", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
+        ttk.Label(logging_tab, text="CSV file").grid(row=1, column=0, sticky="w", pady=(6, 4))
+        self.log_path_entry = ttk.Entry(logging_tab, textvariable=self.log_path_var, width=25)
+        self.log_path_entry.grid(row=2, column=0, sticky="ew")
+        ttk.Label(logging_tab, text="Save timestamps, drone boxes, confidence, angle, distance, LED ID, and speed. Missing estimates are N/A.",
+                  style="Muted.TLabel", wraplength=300).grid(row=3, column=0, sticky="w", pady=(14, 8))
+        ttk.Label(logging_tab, text="Start or stop logging at any time, even without video recording. Existing log rows are kept. Stopping the camera finishes the log.",
+                  style="Muted.TLabel", wraplength=300).grid(row=4, column=0, sticky="w", pady=(0, 8))
+        self.log_error_detail = ttk.Label(logging_tab, text="", style="Error.TLabel", wraplength=300)
+        self.log_error_detail.grid(row=5, column=0, sticky="w", pady=(8, 0))
+        self.log_status = ttk.Label(logging_actions, text="Logging is off.", style="Muted.TLabel", wraplength=300)
+        self.log_status.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.btn_log_browse = ttk.Button(logging_actions, text="Choose log file…", command=self.choose_log_output)
+        self.btn_log_browse.grid(row=1, column=0, sticky="ew", padx=(0, 8))
+        self.btn_logging = ttk.Button(logging_actions, text="Start logging", command=self.toggle_logging, style="Primary.TButton")
+        self.btn_logging.grid(row=1, column=1, sticky="ew")
+        logging_actions.columnconfigure((0, 1), weight=1, uniform="log_actions")
+
         # Results occupy the full window width and remain visible in focus mode.
         results = self._results_panel = ttk.LabelFrame(self.root, text="Drone features", padding=(10, 6))
         results.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 0))
@@ -457,6 +428,7 @@ class PoseFlyGUI:
         style.configure("TFrame", background=BG)
         style.configure("TLabel", background=BG, foreground=TEXT)
         style.configure("Muted.TLabel", foreground=MUTED, font=("DejaVu Sans", 9))
+        style.configure("Error.TLabel", foreground="#ffb6bf", font=("DejaVu Sans", 9))
         style.configure("Brand.TLabel", font=("DejaVu Sans", 22, "bold"))
         style.configure("Heading.TLabel", font=("DejaVu Sans", 11, "bold"))
         style.configure("TButton", padding=(14, 10), background=FIELD, foreground=TEXT,
@@ -594,9 +566,9 @@ class PoseFlyGUI:
         content.pack(fill="both", expand=True)
         if hasattr(self, '_icon_ref'):
             ttk.Label(content, image=self._icon_ref).pack(pady=(0, 8))
-        ttk.Label(content, text="PoseFly", style="Brand.TLabel").pack()
-        ttk.Label(content, text="GNU/Linux desktop edition", style="Muted.TLabel").pack(pady=(4, 16))
-        ttk.Label(content, text="Camera-based drone detection and optical sensing.\n\nDrone confidence · Angle · Distance · LED ID · Speed\n\nN/A means an estimate is unavailable.\nF11: full screen · Esc: return · F1: About", justify="center").pack()
+        ttk.Label(content, text="PoseFly Research Project", style="Brand.TLabel").pack()
+        ttk.Label(content, text="Version: 1.0\nDeveloper: Deniz K. Acikbas\nProgramming Language: Python",
+                  justify="center").pack(pady=(8, 0))
         controls = ttk.Frame(content)
         controls.pack(pady=(22, 0))
         ttk.Button(controls, text="Project on GitHub", command=lambda: webbrowser.open(PROJECT_URL)).pack(side="left", padx=(0, 12))
@@ -673,6 +645,51 @@ class PoseFlyGUI:
         if path:
             self.out_path_var.set(path)
 
+    def choose_log_output(self):
+        path = filedialog.asksaveasfilename(title="Choose detection log", defaultextension=".csv",
+                                           filetypes=[("CSV log", "*.csv")], confirmoverwrite=False,
+                                           initialfile=Path(self.log_path_var.get()).name)
+        if path:
+            self.log_path_var.set(path)
+
+    def toggle_logging(self):
+        if self._log_state in ("starting", "active", "stopping"):
+            self.stop_logging()
+            return
+        path = self.log_path_var.get().strip()
+        if not path or Path(path).suffix.lower() != ".csv":
+            self._set_log_state("error", 0, "Choose a .csv file for the detection log.")
+            return
+        self._log_generation += 1
+        generation = self._log_generation
+        self._set_log_state("starting", 0, "")
+        self._log_writer = ResultLogWriter(path, lambda state, rows, detail:
+                                           self._events.put(("logging", (generation, state, rows, detail))))
+        self._log_writer.start()
+
+    def stop_logging(self):
+        if self._log_writer is not None:
+            if self._log_state in ("starting", "active"):
+                self._set_log_state("stopping", self._log_rows, "")
+            self._log_writer.stop()
+
+    def _set_log_state(self, state, rows, detail):
+        if state == "active" and self._log_state == "stopping":
+            state = "stopping"  # A queued progress update must not undo Stop.
+        self._log_state, self._log_rows = state, rows
+        busy = state in ("starting", "active", "stopping")
+        self.log_path_entry.configure(state="readonly" if busy else "normal")
+        self.btn_log_browse.configure(state="disabled" if busy else "normal")
+        self.btn_logging.configure(
+            text={"starting": "Opening log…", "active": "Stop logging", "stopping": "Finishing log…"}.get(state, "Start logging"),
+            state="disabled" if state in ("starting", "stopping") else "normal",
+            style="Stop.TButton" if state == "active" else "Primary.TButton")
+        text = {"starting": "Opening CSV log…", "active": f"Logging active · {rows} rows saved.",
+                "stopping": "Finishing pending log rows…", "stopped": f"Log saved · {rows} rows this session.",
+                "error": "Logging failed. Check the file or location."}.get(state, "Logging is off.")
+        self.log_status.configure(text=text, style="Error.TLabel" if state == "error" else "Muted.TLabel")
+        self.log_error_detail.configure(text=detail if state == "error" else "")
+
     def _schedule_apply_live_fps(self, *_args):
         if self._fps_after_id:
             self.root.after_cancel(self._fps_after_id)
@@ -732,37 +749,6 @@ class PoseFlyGUI:
         self._apply_rs_if_changed(force=True)
 
     # --------------------------------------------------------
-    # Trajectory launcher
-    # --------------------------------------------------------
-    def _launch_trajectory_algorithm(self, log_file_path: str):
-        if self._trajectory_launched:
-            return
-
-        if not log_file_path or not os.path.exists(log_file_path):
-            self._set_status_threadsafe("Status: Trajectory skipped (log file not found).")
-            return
-
-        if os.path.getsize(log_file_path) <= 0:
-            self._set_status_threadsafe("Status: Trajectory skipped (log file is empty).")
-            return
-
-        here = os.path.dirname(os.path.abspath(__file__))
-        trajectory_script = os.path.join(here, "videoprocessing", "tools", "trajectory_algorithm.py")
-
-        if not os.path.isfile(trajectory_script):
-            self._set_status_threadsafe(f"Status: Trajectory script not found: {trajectory_script}")
-            return
-
-        cmd = [sys.executable, trajectory_script, log_file_path]
-
-        try:
-            subprocess.Popen(cmd)
-            self._trajectory_launched = True
-            self._set_status_threadsafe("Status: Stopped | Trajectory launched")
-        except Exception as e:
-            self._set_status_threadsafe(f"Status: Failed to launch trajectory: {e}")
-
-    # --------------------------------------------------------
     # Run pipeline
     # --------------------------------------------------------
     def start(self):
@@ -790,15 +776,6 @@ class PoseFlyGUI:
         iso, shz = self._read_rs_inputs()
         self._rs_iso_cached, self._rs_shz_cached = iso, shz
 
-        # Prepare results-only log path
-        self._results_log_path = make_results_log_path(out_path)
-        self._trajectory_launched = False
-
-        try:
-            os.makedirs(os.path.dirname(self._results_log_path) or ".", exist_ok=True)
-        except OSError as exc:
-            messagebox.showerror("Output unavailable", str(exc))
-            return
         self._snapshot_settings()
         self._stop_event.clear()
         self._capture_wakeup.clear()
@@ -825,7 +802,7 @@ class PoseFlyGUI:
 
         self._thread = threading.Thread(
             target=self._pipeline_loop,
-            args=(cam_idx, use_dshow, fps, out_path, save_video, self._results_log_path),
+            args=(cam_idx, use_dshow, fps, out_path, save_video),
             daemon=True,
         )
         self._thread.start()
@@ -833,6 +810,7 @@ class PoseFlyGUI:
     def stop(self):
         self._stop_event.set()
         self._capture_wakeup.set()
+        self.stop_logging()
         self._running = False
         self.status.config(text="Status: Stopping...")
         self.btn_stop.config(state="disabled", text="Stopping…")
@@ -852,7 +830,7 @@ class PoseFlyGUI:
                 item = frames.get()
                 if item is None or self._stop_event.is_set():
                     break
-                frame, settings, captured_at = item
+                frame, settings, captured_at, captured_utc = item
                 source_shape = frame.shape[:2]
                 toggles = settings[0]
                 started = time.monotonic()
@@ -890,6 +868,11 @@ class PoseFlyGUI:
                     self._detections_shape = source_shape
                     self._analysis_seconds = finished - started
                     self._analysis_finished_at = finished
+                    logged_detections, logged_features = self._detections, self._features
+                logger = self._log_writer
+                if logger is not None:
+                    logger.submit(logged_detections, logged_features, captured_utc,
+                                  toggles.get("drone_model", "Indoor"), toggles.get("drone", True))
         except Exception as exc:
             errors.append(str(exc))
             traceback.print_exc()
@@ -907,16 +890,12 @@ class PoseFlyGUI:
             if delay <= 0 or not self._capture_wakeup.wait(delay):
                 return
 
-    def _pipeline_loop(self, cam_idx, use_dshow, fps, out_path, save_video, results_log_path):
-        old_stdout = sys.stdout
-        results_logger = None
+    def _pipeline_loop(self, cam_idx, use_dshow, fps, out_path, save_video):
         error = None
         frames = LatestFrame()
         analysis_thread = None
         analysis_errors = []
         try:
-            results_logger = ResultsOnlyLogger(results_log_path, keep_console=True)
-            sys.stdout = results_logger
             self.backend.open_camera(camera_index=cam_idx, use_dshow=use_dshow)
             self.backend.apply_camera_settings_led_id()
             analysis_thread = threading.Thread(
@@ -947,7 +926,7 @@ class PoseFlyGUI:
                 if self._stop_event.is_set():
                     break
                 # Analysis may annotate its own copy; it cannot block or alter live video.
-                frames.put((frame.copy(), settings, time.monotonic()))
+                frames.put((frame.copy(), settings, time.monotonic(), datetime.now(timezone.utc)))
                 self._show_frame_threadsafe(frame)
                 frame_count += 1
                 elapsed = time.monotonic() - measured_since
@@ -972,14 +951,10 @@ class PoseFlyGUI:
                     release()
                 except Exception as exc:
                     error = error or str(exc)
-            sys.stdout = old_stdout
-            if results_logger is not None:
-                try:
-                    results_logger.close()
-                except Exception as exc:
-                    error = error or str(exc)
+            if self._log_writer is not None:
+                self._log_writer.stop()
             self._running = False
-            self._events.put(("finished", (error, results_log_path)))
+            self._events.put(("finished", error))
 
     def _set_status_threadsafe(self, text):
         self._events.put(("status", text))
@@ -1011,6 +986,10 @@ class PoseFlyGUI:
                 self.status.config(text=value)
             elif kind == "camera_settings":
                 self.camera_settings_status.config(text=value)
+            elif kind == "logging":
+                generation, state, rows, detail = value
+                if generation == self._log_generation:
+                    self._set_log_state(state, rows, detail)
             elif kind == "cameras":
                 self._populate_cameras(value)
             elif kind == "scan_error":
@@ -1022,7 +1001,7 @@ class PoseFlyGUI:
                     self._events.put((kind, value))
                     break
                 self._set_buttons(False)
-                error, log_path = value
+                error = value
                 if error:
                     self.status.config(text=f"Status: ERROR {error}")
                 else:
@@ -1085,7 +1064,12 @@ class PoseFlyGUI:
                 values = feature_values(features[index] if index < len(features) else {})
                 rows.append((f"Drone {index + 1}", f"{detection[4]:.0%}", *values))
         self._update_feature_rows(rows)
-        self.feature_summary.config(text=summary + "  •  N/A = no estimate available.")
+        log_note = ""
+        if self._log_state in ("starting", "active", "stopping"):
+            log_note = f"  •  Logging: {self._log_state} ({self._log_rows} rows)"
+        elif self._log_state == "error":
+            log_note = "  •  Log error — see Logs"
+        self.feature_summary.config(text=summary + "  •  N/A = no estimate available." + log_note)
         # Keep controls/results responsive at low capture rates and allow the
         # preview to refresh above 30 FPS when the camera and machine can do so.
         interval = 1.0 / max(30.0, self._live_fps)
@@ -1121,7 +1105,8 @@ class PoseFlyGUI:
         self._wait_for_shutdown()
 
     def _wait_for_shutdown(self):
-        if self._thread and self._thread.is_alive():
+        if ((self._thread and self._thread.is_alive())
+                or (self._log_writer and self._log_writer.is_alive())):
             self.root.after(50, self._wait_for_shutdown)
         else:
             self.root.destroy()

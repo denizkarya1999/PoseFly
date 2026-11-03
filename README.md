@@ -95,7 +95,7 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   **Focus preview** hides the settings sidebar for more viewing space.
   **Full screen** or **F11** fills the screen; **Esc** restores the controls and
   exits full screen. Start and Stop stay accessible in both viewing modes.
-  Camera, Detection, and Recording settings are grouped in sidebar tabs.
+  Camera, Detection, Recording, and Logs settings are grouped in sidebar tabs.
   Settings scroll when space is limited. The full-width feature table stays
   visible below the preview, including in Focus preview mode.
 - Camera discovery checks existing `/dev/video*` devices using V4L2, including
@@ -150,12 +150,26 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   Real rolling-shutter bands depend on the sensor, exposure time and LED modulation.
   See the [Linux camera control reference](https://docs.kernel.org/userspace-api/media/v4l/ext-ctrls-camera.html)
   for the exposure and ISO units used by the driver.
-- Recordings and logs default to
-  `${XDG_DATA_HOME:-$HOME/.local/share}/posefly/results/`. Use **Choose output file** to choose
-  another destination. Reusing an output filename replaces that recording and
-  its results log; choose a new name to preserve earlier sessions.
-- **Stop camera** finishes recording. Closing the main window waits for capture and
-  detection to finish and releases the video writer before exiting. The
+- **Logging is off by default.** In **Logs**, choose a CSV destination and click
+  **Start logging** to opt in. Merely opening the app, choosing a file, or starting
+  the camera does not create a log. **Stop logging** finishes the file while the
+  camera keeps running. Video recording is independent of logging.
+  Logs include UTC capture and logging timestamps, session/frame numbers, drone
+  model, bounding boxes, confidence values (0–1), and all four feature estimates.
+  Each detected drone gets a row; frames without a drone get a row with **N/A**
+  values. Missing or disabled feature estimates also use **N/A**.
+  A compatible CSV file is appended to, preserving existing rows; unrelated files
+  are rejected. File writes run separately from capture and inference. Storage
+  errors or an excessive backlog stop logging and appear in Logs, without stopping
+  the camera. The old automatic stdout-to-text-file logging is disabled in the GUI.
+- Recordings and optional logs default to
+  `${XDG_DATA_HOME:-$HOME/.local/share}/posefly/results/`. **Choose output file**
+  selects the video destination; **Choose log file** selects the CSV destination.
+  Reusing a video filename replaces that recording; log rows are preserved.
+- **Stop camera** finishes recording and any active log. Logging remains off
+  after restarting capture until **Start logging** is clicked again.
+  Closing the main window waits for capture, detection, and pending log writes
+  to finish and releases the output files before exiting. The
   trajectory viewer is not launched automatically.
 
 If no camera is found, check that `/dev/video*` exists, close other camera apps,
@@ -174,7 +188,8 @@ Hardware-free regression tests cover discovery, camera controls, MP4/AVI
 round-trips, output validation, detector coordinates, clean inference crops,
 lazy model loading, continuous preview during slow analysis, drone-gated feature estimates,
 hardware-control conversions/rejections, GUI worker shutdown, full feature/N/A
-display, button visibility, the About dialog, and Linux taskbar identity.
+display, button visibility, the About dialog, Linux taskbar identity, and optional
+CSV logging (opt-in, append, missing values, and storage errors).
 Run from the repository root:
 
 ```sh

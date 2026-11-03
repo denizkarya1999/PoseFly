@@ -31,6 +31,7 @@ class ComputerVision:
         self._drone_cache = {}
 
         # Logging control (rate-limited)
+        self.log_enabled = True
         self._last_log_t = 0.0
         self.log_every_sec = 0.5
         self.log_top_k = 8
@@ -57,6 +58,8 @@ class ComputerVision:
 
     def _should_log_now(self) -> bool:
         """Return True if enough time has passed to print logs."""
+        if not self.log_enabled:
+            return False
         if self.log_every_sec <= 0:
             return True
         now = time.monotonic()

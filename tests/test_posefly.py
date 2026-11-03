@@ -1,5 +1,6 @@
 """Hardware-free regression tests; run from the repository root with unittest."""
 import os
+import csv
 from pathlib import Path
 import subprocess
 import sys
@@ -366,13 +367,16 @@ class GuiTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.app.out_path_var.set(str(Path(self.temp.name) / 'out.mp4'))
         self.app.save_var.set(False)
-        self.app._launch_trajectory_algorithm = Mock()
+        self.app.log_path_var.set(str(Path(self.temp.name) / 'logs' / 'detections.csv'))
         self.pump(lambda: str(self.app.btn_start['state']) == 'normal')
 
     def tearDown(self):
         self.app._stop_event.set()
         if self.app._thread:
             self.app._thread.join(3)
+        if self.app._log_writer:
+            self.app._log_writer.stop()
+            self.app._log_writer.join(3)
         try:
             for callback in self.root.tk.call('after', 'info'):
                 self.root.after_cancel(callback)
@@ -398,6 +402,79 @@ class GuiTests(unittest.TestCase):
         self.assertFalse(self.app.use_rs_var.get())
         self.assertFalse(hasattr(self.app, 'analysis_preview'))
         self.assertEqual(self.app.feature_table.item('0', 'values'), ('N/A',) * 6)
+        self.assertEqual(self.app._log_state, 'off')
+        self.assertIsNone(self.app._log_writer)
+        self.assertFalse(self.app.backend.cv.log_enabled)
+
+    def test_logging_requires_explicit_opt_in_and_does_not_redirect_stdout(self):
+        backend = Mock()
+        backend.read_frame.return_value = (True, np.zeros((48, 64, 3), np.uint8))
+        backend.process_frame.side_effect = lambda frame, toggles, on_detections=None: frame
+        self.app.backend = backend
+        stdout = sys.stdout
+        self.app.start()
+        self.pump(lambda: backend.process_frame.call_count >= 3)
+        self.assertIsNone(self.app._log_writer)
+        self.assertEqual(list(Path(self.temp.name).iterdir()), [])
+        self.assertIs(sys.stdout, stdout)
+        self.app.stop()
+        self.app._thread.join(3)
+
+    def test_logging_can_start_stop_and_append_while_camera_keeps_running(self):
+        backend = Mock()
+        backend.read_frame.return_value = (True, np.zeros((48, 64, 3), np.uint8))
+        backend.process_frame.side_effect = lambda frame, toggles, on_detections=None: frame
+        backend.drone_detections.return_value = [(1, 2, 20, 30, .9)]
+        backend.drone_features.return_value = [dict(angle=('45', .8), led=(None, None))]
+        self.app.backend = backend
+        self.app.start()
+        self.pump(lambda: backend.process_frame.call_count >= 2)
+        self.app.btn_logging.invoke()
+        self.pump(lambda: self.app._log_state == 'active' and self.app._log_writer.rows_written > 0)
+        self.assertTrue(self.app.log_path_entry.instate(['readonly']))
+        self.assertTrue(self.app.btn_log_browse.instate(['disabled']))
+        self.app.btn_logging.invoke()
+        self.pump(lambda: self.app._log_state == 'stopped')
+        with open(self.app.log_path_var.get(), newline='') as file:
+            first = list(csv.DictReader(file))
+        self.assertEqual(first[0]['angle'], '45')
+        self.assertEqual(first[0]['led_id'], 'N/A')
+        count = backend.read_frame.call_count
+        self.pump(lambda: backend.read_frame.call_count >= count + 3)
+        self.app.btn_logging.invoke()
+        self.pump(lambda: self.app._log_state == 'active' and self.app._log_writer.rows_written > 0)
+        self.app.stop()
+        self.pump(lambda: self.app._log_state == 'stopped' and not self.app._thread.is_alive())
+        with open(self.app.log_path_var.get(), newline='') as file:
+            combined = list(csv.DictReader(file))
+        self.assertEqual(combined[:len(first)], first)
+        self.assertGreater(len(combined), len(first))
+        self.assertNotEqual(first[0]['session_id'], combined[-1]['session_id'])
+        backend.open_camera.assert_called_once()
+        backend.write_frame_if_enabled.assert_not_called()
+        # Restarting capture does not silently re-enable a finished log.
+        size = Path(self.app.log_path_var.get()).stat().st_size
+        count = backend.process_frame.call_count
+        self.app.start()
+        self.pump(lambda: backend.process_frame.call_count >= count + 3)
+        self.assertEqual(Path(self.app.log_path_var.get()).stat().st_size, size)
+
+    def test_logging_error_does_not_stop_camera(self):
+        backend = Mock()
+        backend.read_frame.return_value = (True, np.zeros((48, 64, 3), np.uint8))
+        backend.process_frame.side_effect = lambda frame, toggles, on_detections=None: frame
+        self.app.backend = backend
+        parent = Path(self.temp.name) / 'not_a_folder'
+        parent.write_text('Keep this file')
+        self.app.log_path_var.set(str(parent / 'detections.csv'))
+        self.app.start()
+        self.app.toggle_logging()
+        self.pump(lambda: self.app._log_state == 'error')
+        count = backend.read_frame.call_count
+        self.pump(lambda: backend.read_frame.call_count >= count + 3)
+        self.assertTrue(self.app._running)
+        self.assertEqual(parent.read_text(), 'Keep this file')
+        self.assertTrue(self.app.btn_logging.instate(['!disabled']))
 
     def test_about_dialog_can_be_opened_closed_and_reopened(self):
         self.root.deiconify()

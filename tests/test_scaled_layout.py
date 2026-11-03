@@ -47,7 +47,7 @@ class ScaledLayoutTests(unittest.TestCase):
                             self.assertGreaterEqual(app.settings_tabs.winfo_width(), app.settings_tabs.winfo_reqwidth())
                             for button in (*app._toolbar_buttons, app.btn_about):
                                 self.assert_unclipped(button)
-                            for index in range(3):
+                            for index in range(len(app.settings_tabs.tabs())):
                                 app.settings_tabs.select(index)
                                 root.update()
                                 page, scrollbar, actions = app._settings_layouts[index]
@@ -56,8 +56,10 @@ class ScaledLayoutTests(unittest.TestCase):
                                     buttons = (app.live_fps_entry, app.btn_refresh, app.btn_apply_rs)
                                 elif index == 1:
                                     buttons = app.feature_switches
-                                else:
+                                elif index == 2:
                                     buttons = (app.save_check, app.btn_browse)
+                                else:
+                                    buttons = (app.btn_log_browse, app.btn_logging)
                                 for button in buttons:
                                     self.assert_unclipped(button)
                             font = tkfont.Font(root=root, font=ttk.Style(root).lookup('Treeview', 'font'))
