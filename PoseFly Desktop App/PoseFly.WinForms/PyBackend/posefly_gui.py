@@ -23,7 +23,6 @@ from videoprocessing.drone_overlay import draw_recent_drones, feature_values
 
 from camera.discovery import list_available_cameras
 from camera.feature_capture import FeatureCapture, SETTLE_FRAMES
-from machinelearning.model_profiles import FEATURE_MODELS
 
 ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "PoseFly.png"
 PROJECT_URL = "https://github.com/denizkarya1999/PoseFly"
@@ -320,10 +319,10 @@ class PoseFlyGUI:
         else:
             self.use_dshow_var.set(False)
             self.chk_dshow.configure(state="disabled")
-        exposure = ttk.LabelFrame(camera_tab, text="Exposure", padding=10)
+        exposure = ttk.LabelFrame(camera_tab, text="Drone camera exposure", padding=10)
         exposure.grid(row=4, column=0, sticky="ew", pady=(4, 0))
         exposure.columnconfigure((0, 1), weight=1)
-        ttk.Checkbutton(exposure, text="Manual camera exposure", variable=self.use_rs_var,
+        ttk.Checkbutton(exposure, text="Manual drone exposure", variable=self.use_rs_var,
                         command=self.apply_rs).grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(exposure, text="ISO").grid(row=1, column=0, sticky="w", pady=(6, 4))
         ttk.Label(exposure, text="Shutter (1/s)").grid(row=1, column=1, sticky="w", pady=(6, 4))
@@ -337,8 +336,6 @@ class PoseFlyGUI:
         self.camera_settings_status = ttk.Label(exposure, text="1000 = 1/1000 s exposure.\nISO requires camera support.",
                                                 style="Muted.TLabel", wraplength=280, justify="left")
         self.camera_settings_status.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 2))
-        ttk.Label(exposure, text="These settings control the preview and drone detection. Feature models use separate captures at their training exposure.",
-                  style="Muted.TLabel", wraplength=280).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 2))
 
         ttk.Label(detection_tab, text="Drone model", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         ttk.Combobox(detection_tab, values=list(DRONE_MODELS), textvariable=self.drone_model_var,
@@ -358,14 +355,6 @@ class PoseFlyGUI:
         switches.bind("<Configure>", lambda _event: self._fit_sidebar())
         ttk.Label(detection_tab, text="All features stay visible. N/A means no estimate is available, including when a model is off or still running.",
                   style="Muted.TLabel", wraplength=300).grid(row=4, column=0, sticky="w", pady=(10, 0))
-
-        ttk.Label(detection_tab, text="Feature training exposure", style="Heading.TLabel").grid(row=5, column=0, sticky="w", pady=(16, 4))
-        preset_text = "Outdoor checkpoints\n" + "\n".join(
-            f"{preset.label}: 1/{preset.shutter_hz:g} s · ISO {preset.iso}" for preset in FEATURE_MODELS.values())
-        ttk.Label(detection_tab, text=preset_text, style="Muted.TLabel", wraplength=300).grid(row=6, column=0, sticky="w")
-        self.feature_exposure_status = ttk.Label(detection_tab, text="Actual feature exposure appears after a drone is detected.",
-                                                 style="Muted.TLabel", wraplength=300)
-        self.feature_exposure_status.grid(row=7, column=0, sticky="w", pady=(10, 0))
 
         ttk.Label(recording_tab, text="Recording", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.save_check = ttk.Checkbutton(recording_tab, text="Save analysis video", variable=self.save_var)
@@ -911,9 +900,7 @@ class PoseFlyGUI:
         analysis_thread = None
         analysis_errors = []
         try:
-            feature_capture = self._feature_capture = FeatureCapture(
-                self._stop_event, self._capture_wakeup,
-                lambda report: self._events.put(("feature_camera_settings", report)))
+            feature_capture = self._feature_capture = FeatureCapture(self._stop_event, self._capture_wakeup)
             self.backend.cv.feature_frame_provider = feature_capture.request
             self.backend.open_camera(camera_index=cam_idx, use_dshow=use_dshow)
             self.backend.apply_camera_settings_led_id()
@@ -1029,8 +1016,6 @@ class PoseFlyGUI:
                 self.status.config(text=value)
             elif kind == "camera_settings":
                 self.camera_settings_status.config(text=value)
-            elif kind == "feature_camera_settings":
-                self.feature_exposure_status.config(text="Feature capture: " + value)
             elif kind == "logging":
                 generation, state, rows, detail = value
                 if generation == self._log_generation:

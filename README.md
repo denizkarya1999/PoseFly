@@ -137,7 +137,7 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   If detection runs below the chosen FPS, that recording plays faster than real
   time. The preview shows separate capture and detection rates.
 - The camera starts with automatic exposure, avoiding an unintended dark image
-  from a fixed short shutter time. **Manual camera exposure** sends your chosen
+  from a fixed short shutter time. **Manual drone exposure** sends your chosen
   settings to the camera when enabled. **Shutter (1/s)** is
   reciprocal exposure time: `1000` requests a 1/1000-second exposure. It is not
   the sensor's row-scan frequency. Turning the checkbox off requests automatic
@@ -150,12 +150,10 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   Real rolling-shutter bands depend on the sensor, exposure time and LED modulation.
   See the [Linux camera control reference](https://docs.kernel.org/userspace-api/media/v4l/ext-ctrls-camera.html)
   for the exposure and ISO units used by the driver.
-- GNU/Linux live feature inference uses each loaded checkpoint's training exposure. The
-  bundled **Outdoor Angle, Distance, LED ID and Speed** checkpoints all use
-  **1/6000 s, ISO 1000**, as recorded for their March 3, 2026 training run.
-  Earlier ISO 800 settings (including the older 1/6400 s speed dataset) belong
-  to earlier datasets and are not applied to these Outdoor checkpoints.
-  The Detection tab lists the presets and the camera's actual feature exposure.
+- GNU/Linux live feature inference uses each loaded checkpoint's training exposure
+  internally. Feature-model shutter/ISO settings and hardware readback stay in the
+  background. The UI displays only the **Drone camera exposure** controls and
+  readback; the preview continues to show the normal drone-detection view.
   The Indoor/Outdoor **drone** selector continues to select only the drone model.
 - After finding a drone in a regular-exposure frame, the capture worker requests
   a separate real frame at the feature model's exposure, discards transition
@@ -165,8 +163,7 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   slightly later, so rapid motion can reduce feature accuracy. Preview holds its
   last normal frame during the exposure switch, then continues while inference
   runs. No synthetic rolling-shutter stripes or artificial ISO gain are applied.
-  The camera may round exposure or lack ISO control; the actual result is shown,
-  and exact agreement with the training settings depends on the camera hardware.
+  Exact agreement with training exposure depends on camera support.
 - **Logging is off by default.** In **Logs**, choose a CSV destination and click
   **Start logging** to opt in. Merely opening the app, choosing a file, or starting
   the camera does not create a log. **Stop logging** finishes the file while the

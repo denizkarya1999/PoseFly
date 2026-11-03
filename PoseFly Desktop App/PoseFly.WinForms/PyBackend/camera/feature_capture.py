@@ -17,10 +17,10 @@ class CaptureRequest:
 
 
 class FeatureCapture:
-    def __init__(self, stop, wake, notify):
+    def __init__(self, stop, wake):
         self.stop = stop
         self.wake = wake
-        self.notify = notify
+        self.last_report = None
         self.requests = queue.SimpleQueue()
         self.exposure_changed = False
 
@@ -50,8 +50,8 @@ class FeatureCapture:
                 return False
             preset = FEATURE_MODELS[request.name]
             self.exposure_changed = True
-            report = backend.set_rollingshutter(preset.iso, preset.shutter_hz, enabled=True)
-            self.notify(str(report))
+            # Hardware readback stays internal; the UI only reports drone exposure.
+            self.last_report = str(backend.set_rollingshutter(preset.iso, preset.shutter_hz, enabled=True))
             for index in range(SETTLE_FRAMES + 1):
                 if self.stop.is_set():
                     return True
