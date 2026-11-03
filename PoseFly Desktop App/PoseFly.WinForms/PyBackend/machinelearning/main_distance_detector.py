@@ -9,7 +9,7 @@ if os.name == "nt":
     pathlib.PosixPath = pathlib.WindowsPath
 
 # Ensure models/ is on sys.path (YOLO YAML safe)
-MODELS_DIR = Path(__file__).parent / "models/OutDoorModels/Modules"
+MODELS_DIR = Path(__file__).parent / "models/OutdoorModels/Modules"
 
 if str(MODELS_DIR) not in sys.path:
     sys.path.insert(0, str(MODELS_DIR))
@@ -92,7 +92,7 @@ class DistanceDetector:
         self.model = YOLO(model_path)
 
     def detect(self, frame, conf=0.001, iou=0.7):
-        frame = apply_rolling_shutter(frame)
+        # Use the real camera exposure; do not synthesize stripes for inference.
 
         r = self.model.predict(
             frame,

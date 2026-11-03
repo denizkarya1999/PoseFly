@@ -15,8 +15,8 @@ class PipelineBackend:
         # server calls this; keep compatibility
         self.camera.apply_led_settings()
 
-    def set_rollingshutter(self, iso: int, shutter_hz: float):
-        self.camera.rollingshutter(iso, shutter_hz)
+    def set_rollingshutter(self, iso: int, shutter_hz: float, enabled=True):
+        return self.camera.rollingshutter(iso, shutter_hz, enabled)
 
     def read_frame(self):
         return self.camera.read()
@@ -32,5 +32,11 @@ class PipelineBackend:
         self.camera.release_writer()
 
     # Vision
-    def process_frame(self, frame, toggles):
-        return self.cv.process(frame, toggles)
+    def process_frame(self, frame, toggles, on_detections=None):
+        return self.cv.process(frame, toggles, on_detections=on_detections)
+
+    def drone_detections(self):
+        return self.cv.last_drone_detections
+
+    def drone_features(self):
+        return self.cv.last_drone_features

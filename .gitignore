@@ -12,3 +12,7 @@ obj/
 # Python caches (optional)
 __pycache__/
 *.pyc
+
+# Local Python environment and generated recordings
+.venv/
+PoseFly Desktop App/PoseFly.WinForms/PyBackend/results/

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=PoseFly
+Comment=Launch the PoseFly camera and inference application
+Exec="/home/denizkaryaacikbas/Projects/PoseFly/PoseFly"
+Path=/home/denizkaryaacikbas/Projects/PoseFly
+Icon=/home/denizkaryaacikbas/Projects/PoseFly/PoseFly Desktop App/PoseFly.WinForms/assets/PoseFly.png
+Terminal=false
+Categories=Science;
+StartupNotify=false
+StartupWMClass=Posefly

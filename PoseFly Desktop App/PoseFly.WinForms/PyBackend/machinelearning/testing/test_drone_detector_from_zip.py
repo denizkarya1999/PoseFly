@@ -279,7 +279,7 @@ def show_one_sample_with_box(zip_path, detector, split_name):
     plt.subplot(1, 2, 2)
     plt.imshow(pre_rgb)
     plt.axis("off")
-    plt.title(f"{split_name.capitalize()} PREPROCESSED{title_extra}\n(resize_fill_512 from DroneDetector)")
+    plt.title(f"{split_name.capitalize()} PREPROCESSED{title_extra}\n(full-frame input to DroneDetector)")
 
     plt.tight_layout()
     plt.show()

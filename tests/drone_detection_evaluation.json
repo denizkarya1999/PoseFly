@@ -1,0 +1,58 @@
+{
+  "dataset": "Posefly_Drone.v2i.yolov11.zip test split",
+  "confidence_threshold": 0.1,
+  "matching_iou": 0.5,
+  "scope": "Bundled labelled images; not a general real-world accuracy estimate.",
+  "results": [
+    {
+      "model": "current_attention_512",
+      "images": 40,
+      "images_with_predictions": 2,
+      "ground_truth_boxes": 40,
+      "matched_at_iou_05": 1,
+      "total_predictions": 2,
+      "mean_matched_iou": 0.6436044171383812,
+      "seconds": 12.9
+    },
+    {
+      "model": "attention_full_640",
+      "images": 40,
+      "images_with_predictions": 0,
+      "ground_truth_boxes": 40,
+      "matched_at_iou_05": 0,
+      "total_predictions": 0,
+      "mean_matched_iou": 0,
+      "seconds": 17.04
+    },
+    {
+      "model": "original_full_640",
+      "images": 40,
+      "images_with_predictions": 28,
+      "ground_truth_boxes": 40,
+      "matched_at_iou_05": 28,
+      "total_predictions": 28,
+      "mean_matched_iou": 0.8156034047634833,
+      "seconds": 17.46
+    },
+    {
+      "model": "indoor_full_640",
+      "images": 40,
+      "images_with_predictions": 40,
+      "ground_truth_boxes": 40,
+      "matched_at_iou_05": 40,
+      "total_predictions": 40,
+      "mean_matched_iou": 0.9350964968010619,
+      "seconds": 16.56
+    },
+    {
+      "model": "original_full_512",
+      "images": 40,
+      "images_with_predictions": 35,
+      "ground_truth_boxes": 40,
+      "matched_at_iou_05": 35,
+      "total_predictions": 37,
+      "mean_matched_iou": 0.8493407517766147,
+      "seconds": 10.22
+    }
+  ]
+}

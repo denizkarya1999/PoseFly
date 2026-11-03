@@ -10,134 +10,14 @@ import tkinter as tk
 from tkinter import filedialog, messagebox
 import cv2
 from PIL import Image, ImageTk
-import math
-import numpy as np
 
 import os, sys
 import platform
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from camera import Camera
+from discovery import list_available_cameras
 
 DEFAULT_FPS = 60.0
-
-
-def apply_rolling_shutter(frame, iso, shutter_hz):
-    h, w, _ = frame.shape
-    row_time = 1.0 / max(1, int(shutter_hz))
-    out = frame.copy()
-
-    # --- Camera-like mapping (matches camera.py) ---
-
-    # ISO -> gain (log mapping)
-    iso_f = float(max(1, iso))
-    t_iso = (math.log(iso_f) - math.log(50.0)) / (math.log(6400.0) - math.log(50.0))
-    t_iso = max(0.0, min(1.0, t_iso))
-    gain = 2.0 + t_iso * 18.0  # ~2..20
-
-    # shutter_hz -> exposure proxy (higher Hz => darker)
-    sh_f = float(max(1, shutter_hz))
-    t_sh = (math.log(sh_f) - math.log(5.0)) / (math.log(6000.0) - math.log(5.0))
-    t_sh = max(0.0, min(1.0, t_sh))
-
-    exposure = -10.0 + (1.0 - t_sh) * 6.0
-    exposure_scale = 2.0 ** (exposure / 2.0)
-
-    brightness = 95.0 + (1.0 - t_sh) * 15.0
-    brightness_scale = brightness / 100.0
-
-    # --- OOK stripe model (row-time based) ---
-    led_freq_hz = 2000
-    duty = 0.5
-    contrast = 0.90
-
-    y = np.arange(h, dtype=np.float32)
-    t = y * row_time
-    phase = (t * led_freq_hz) % 1.0
-    on = (phase < duty).astype(np.float32)
-
-    row_gain = (1.0 - contrast) + contrast * on
-    row_gain = row_gain[:, None]
-
-    # Apply everything in HSV value channel
-    hsv = cv2.cvtColor(out, cv2.COLOR_BGR2HSV).astype(np.float32)
-    v = hsv[:, :, 2]
-
-    v *= gain
-    v *= exposure_scale
-    v *= brightness_scale
-    v *= row_gain
-
-    hsv[:, :, 2] = np.clip(v, 0, 255)
-    out = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR)
-    return out
-
-
-def _probe_camera(index: int, backend: int) -> tuple[bool, tuple[int, int] | None]:
-    """
-    Try to open/read one frame from (index, backend).
-    Returns: (ok, (w,h) or None)
-    """
-    cap = None
-    try:
-        cap = cv2.VideoCapture(int(index), int(backend))
-        if not cap.isOpened():
-            return False, None
-        ok, frame = cap.read()
-        if not ok or frame is None:
-            return False, None
-        h, w = frame.shape[:2]
-        return True, (w, h)
-    except Exception:
-        return False, None
-    finally:
-        try:
-            if cap is not None:
-                cap.release()
-        except Exception:
-            pass
-
-
-def list_available_cameras(max_index: int = 10) -> list[dict]:
-    """
-    Cross-platform camera enumeration using OpenCV probing.
-    Returns list of dicts: {"index": i, "label": "...", "backend": backend_int}
-    """
-    sysname = platform.system()
-
-    # Try multiple backends for discovery (ordered by what usually works best)
-    if sysname == "Windows":
-        backends = [cv2.CAP_DSHOW, cv2.CAP_MSMF, cv2.CAP_ANY]
-        backend_names = {
-            cv2.CAP_DSHOW: "DShow",
-            cv2.CAP_MSMF: "MSMF",
-            cv2.CAP_ANY: "Any",
-        }
-    else:
-        backends = [cv2.CAP_V4L2, cv2.CAP_ANY, cv2.CAP_GSTREAMER]
-        backend_names = {
-            cv2.CAP_V4L2: "V4L2",
-            cv2.CAP_ANY: "Any",
-            cv2.CAP_GSTREAMER: "GStreamer",
-        }
-
-    found = []
-    seen_indices = set()
-
-    # Probe indices; first successful backend "claims" that index for the dropdown
-    for i in range(0, max_index + 1):
-        if i in seen_indices:
-            continue
-        for b in backends:
-            ok, wh = _probe_camera(i, b)
-            if ok:
-                seen_indices.add(i)
-                w_h_str = f"{wh[0]}x{wh[1]}" if wh else "?"
-                bname = backend_names.get(b, str(b))
-                label = f"Camera {i}  ({bname}, {w_h_str})"
-                found.append({"index": i, "label": label, "backend": b})
-                break
-
-    return found
 
 
 class RecorderUI:
@@ -199,13 +79,13 @@ class RecorderUI:
         self.iso_entry.grid(row=2, column=1, sticky="w", pady=(10, 0))
 
         # Shutter Hz (typed)
-        tk.Label(panel, text="Shutter (Hz):").grid(row=3, column=0, sticky="w")
+        tk.Label(panel, text="Shutter (1/s):").grid(row=3, column=0, sticky="w")
         self.shutter_var = tk.StringVar(value=str(self.cam.shutter_hz))
         self.shutter_entry = tk.Entry(panel, textvariable=self.shutter_var, width=12)
         self.shutter_entry.grid(row=3, column=1, sticky="w")
 
         # Apply button
-        self.btn_apply_rs = tk.Button(panel, text="Apply ISO/Hz", command=self.apply_rs, state="disabled")
+        self.btn_apply_rs = tk.Button(panel, text="Apply camera settings", command=self.apply_rs, state="disabled")
         self.btn_apply_rs.grid(row=2, column=2, rowspan=2, padx=8, sticky="ns")
 
         # FPS (typed)
@@ -235,7 +115,7 @@ class RecorderUI:
 
         # Rolling shutter on/off
         self.use_rs_var = tk.BooleanVar(value=True)
-        tk.Checkbutton(ctrl, text="Rolling Shutter Effect", variable=self.use_rs_var)\
+        tk.Checkbutton(ctrl, text="Manual camera exposure", variable=self.use_rs_var, command=self.apply_rs)\
             .pack(side="left", padx=8)
 
         # Status
@@ -252,7 +132,7 @@ class RecorderUI:
             self.status.config(text="Status: Scanning cameras...")
             self.root.update_idletasks()
 
-            cams = list_available_cameras(max_index=20)
+            cams = list_available_cameras()
             self._cams = cams
             self._cam_label_to_index = {c["label"]: c["index"] for c in cams}
 
@@ -271,7 +151,7 @@ class RecorderUI:
             # populate menu
             for c in cams:
                 lbl = c["label"]
-                menu.add_command(label=lbl, command=lambda v=lbl: self.cam_choice_var.set(v))
+                menu.add_command(label=lbl, command=lambda v=lbl: self._select_camera(v))
 
             # select first by default
             self.cam_choice_var.set(cams[0]["label"])
@@ -288,16 +168,11 @@ class RecorderUI:
         shz = max(5.0, min(6000.0, shz))
         return iso, shz
 
+    def _select_camera(self, label):
+        self.cam_choice_var.set(label)
+        self.cam_index_var.set(self._cam_label_to_index[label])
+
     def _selected_camera_index(self) -> int:
-        """
-        If dropdown matches, use that index; otherwise fall back to Spinbox.
-        Also sync spinbox when a dropdown choice exists.
-        """
-        choice = self.cam_choice_var.get()
-        if choice in self._cam_label_to_index:
-            idx = int(self._cam_label_to_index[choice])
-            self.cam_index_var.set(idx)
-            return idx
         return int(self.cam_index_var.get())
 
     # ---------------- Camera controls ----------------
@@ -340,10 +215,10 @@ class RecorderUI:
             return
         try:
             iso, shz = self._get_iso_shz()
-            self.cam.rollingshutter(iso, shz)
-            self.status.config(text=f"Status: Applied ISO={iso}, ShutterHz={shz}")
+            report = self.cam.rollingshutter(iso, shz, enabled=self.use_rs_var.get())
+            self.status.config(text=f"Status: {report}")
         except Exception:
-            messagebox.showerror("Input Error", "Enter valid ISO (50..6400) and Hertz (5..6000).")
+            messagebox.showerror("Input Error", "Enter valid ISO (50..6400) and shutter reciprocal (5..6000).")
 
     # ---------------- Recording controls ----------------
     def choose_output(self):
@@ -404,13 +279,6 @@ class RecorderUI:
             self.status.config(text="Status: Failed to read frame")
             self.root.after(30, self._update_loop)
             return
-
-        if self.use_rs_var.get():
-            try:
-                iso, shz = self._get_iso_shz()
-                frame = apply_rolling_shutter(frame, iso=iso, shutter_hz=shz)
-            except Exception:
-                pass
 
         try:
             self.cam.write_if_enabled(frame, self.record_enabled, self.output_path, self.fps)

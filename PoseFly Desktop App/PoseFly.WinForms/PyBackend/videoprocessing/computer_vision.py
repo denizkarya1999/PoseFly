@@ -1,45 +1,65 @@
-﻿# computer_vision.py
+# computer_vision.py
 import time
 import cv2
 import os
 import sys
 import subprocess
 
-# Individual perception modules
-from machinelearning.main_drone_detector import DroneDetector
-from machinelearning.main_angle_detector import AngleDetector
-from machinelearning.main_distance_detector import DistanceDetector
-from machinelearning.main_led_id_detector import LEDDetector
-from machinelearning.main_speed_detector import SpeedDetector
+from importlib import import_module
+
+# Import and load only enabled models, on the pipeline worker rather than the UI.
+DETECTORS = {
+    "drone": ("main_drone_detector", "DroneDetector"),
+    "angle": ("main_angle_detector", "AngleDetector"),
+    "distance": ("main_distance_detector", "DistanceDetector"),
+    "led": ("main_led_id_detector", "LEDDetector"),
+    "speed": ("main_speed_detector", "SpeedDetector"),
+}
+
+DRONE_MODELS = {
+    "Indoor": "models/IndoorModels/Posefly.pt",
+    "Outdoor": "models/OutdoorModels/PoseFly_Outdoor_Drone_Detection_Original_YOLO_v26m.pt",
+}
 
 
 class ComputerVision:
     def __init__(self):
-        # Initialize all sub-models
-        self.drone = DroneDetector()
-        self.angle = AngleDetector()
-        self.distance = DistanceDetector()
-        self.led = LEDDetector()
-        self.speed = SpeedDetector()
+        for name in DETECTORS:
+            setattr(self, name, None)
+
+        self.drone_profile = "Indoor"
+        self._drone_cache = {}
 
         # Logging control (rate-limited)
         self._last_log_t = 0.0
         self.log_every_sec = 0.5
         self.log_top_k = 8
 
-        # If no drone is detected, still run models on full frame (for debugging/logging)
-        self.run_submodels_on_full_frame_when_no_drone = True
-
         self._iter = 0
+        self.last_drone_detections = []
+        self.last_drone_features = []
 
         # Prevent accidental multiple launches
         self._trajectory_already_run = False
+
+    def _detector(self, name):
+        detector = getattr(self, name)
+        if detector is None:
+            module, class_name = DETECTORS[name]
+            factory = getattr(import_module(f"machinelearning.{module}"), class_name)
+            if name == "drone":
+                detector = factory(model_path=DRONE_MODELS[self.drone_profile])
+                self._drone_cache[self.drone_profile] = detector
+            else:
+                detector = factory()
+            setattr(self, name, detector)
+        return detector
 
     def _should_log_now(self) -> bool:
         """Return True if enough time has passed to print logs."""
         if self.log_every_sec <= 0:
             return True
-        now = time.time()
+        now = time.monotonic()
         if (now - self._last_log_t) >= self.log_every_sec:
             self._last_log_t = now
             return True
@@ -220,81 +240,55 @@ class ComputerVision:
 
     # ---------- Main pipeline ----------
 
-    def process(self, frame, toggles):
+    def process(self, frame, toggles, on_detections=None):
+        self.last_drone_detections = []
+        self.last_drone_features = []
+        # Feature estimates are meaningful only for detected drone crops.
+        if not toggles.get("drone", True):
+            if on_detections is not None:
+                on_detections([])
+            return frame
+        profile = toggles.get("drone_model", "Indoor")
+        if profile not in DRONE_MODELS:
+            raise ValueError(f"Unknown drone model: {profile}")
+        if profile != self.drone_profile:
+            self.drone_profile = profile
+            self.drone = self._drone_cache.get(profile)
         do_log = self._should_log_now()
-
-        # 1) Drone detection on full frame
-        drone_out = self.drone.detect(frame) if toggles.get("drone", True) else None
-
-        has_boxes = (
-            drone_out is not None and
-            hasattr(drone_out, "boxes") and
-            drone_out.boxes is not None and
-            len(drone_out.boxes) > 0
-        )
-
-        # 2) No drone found → optionally run all models on full frame (logging only)
-        if not has_boxes:
-            if self.run_submodels_on_full_frame_when_no_drone:
-                angle_out = self.angle.detect(frame) if toggles.get("angle", True) else None
-                dist_out  = self.distance.detect(frame) if toggles.get("distance", True) else None
-                led_out   = self.led.detect(frame) if toggles.get("led", True) else None
-                speed_out = self.speed.detect(frame) if toggles.get("speed", True) else None
-
-                if do_log:
-                    self._print_iteration_line(
-                        drone_out=drone_out if toggles.get("drone", True) else None,
-                        angle_out=angle_out,
-                        dist_out=dist_out,
-                        led_out=led_out,
-                        speed_out=speed_out,
-                    )
+        drone_out = self._detector("drone").detect(frame)
+        boxes = getattr(drone_out, "boxes", None)
+        if boxes is None or len(boxes) == 0:
+            if on_detections is not None:
+                on_detections([])
+            if do_log:
+                self._print_iteration_line(drone_out=drone_out)
             return frame
 
-        # 3) Drone(s) detected → process each drone crop
-        for b in drone_out.boxes:
-            x1, y1, x2, y2 = map(int, b.xyxy[0])
-            drone_conf = float(b.conf[0]) if hasattr(b, "conf") else 0.0
-
-            # Draw only the drone bounding box
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (255, 255, 255), 2)
-
-            crop = frame[y1:y2, x1:x2].copy()
-            if crop.size == 0:
+        h, w = frame.shape[:2]
+        for box in boxes:
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            x1, x2 = max(0, min(w, x1)), max(0, min(w, x2))
+            y1, y2 = max(0, min(h, y1)), max(0, min(h, y2))
+            if x2 <= x1 or y2 <= y1:
                 continue
-
-            # Run all sub-models on the drone crop
-            angle_out = self.angle.detect(crop) if toggles.get("angle", True) else None
-            dist_out  = self.distance.detect(crop) if toggles.get("distance", True) else None
-            led_out   = self.led.detect(crop) if toggles.get("led", True) else None
-            speed_out = self.speed.detect(crop) if toggles.get("speed", True) else None
-
-            # Extract best prediction per model
-            led_lbl, led_conf = self._best_item(led_out)
-            ang_lbl, ang_conf = self._best_item(angle_out)
-            dst_lbl, dst_conf = self._best_item(dist_out)
-            spd_lbl, spd_conf = self._best_item(speed_out)
-
-            # Build readable header text
-            led_part = f"Drone ID: {led_lbl}, {led_conf*100:.1f}%" if led_lbl else "Drone ID: N/A"
-            ang_part = f"Angle: {ang_lbl}, {ang_conf*100:.1f}%" if ang_lbl else "Angle: N/A"
-            dst_part = f"Distance: {dst_lbl}, {dst_conf*100:.1f}%" if dst_lbl else "Distance: N/A"
-            spd_part = f"Speed: {spd_lbl}, {spd_conf*100:.1f}%" if spd_lbl else "Speed: N/A"
-
-            header = (
-                f"Drone: {drone_conf * 100.0:.1f}% | "
-                f"{led_part} | {ang_part} | {dst_part} | {spd_part}"
-            )
-
-            self._draw_header_on_frame(frame, x1, y1, x2, header)
-
+            self.last_drone_detections.append((x1, y1, x2, y2, float(box.conf[0])))
+        # Publish drone boxes before loading/running the slower feature models.
+        if on_detections is not None:
+            on_detections(list(self.last_drone_detections))
+        for x1, y1, x2, y2, confidence in self.last_drone_detections:
+            # Every submodel receives the same untouched camera crop.
+            crop = frame[y1:y2, x1:x2].copy()
+            outputs, features = {}, {}
+            for name in ("angle", "distance", "led", "speed"):
+                if toggles.get(name, True):
+                    outputs[name] = self._detector(name).detect(crop)
+                    features[name] = self._best_item(outputs[name])
+            self.last_drone_features.append(features)
             if do_log:
                 self._print_iteration_line(
-                    drone_out=drone_out if toggles.get("drone", True) else None,
-                    angle_out=angle_out,
-                    dist_out=dist_out,
-                    led_out=led_out,
-                    speed_out=speed_out,
+                    drone_out=drone_out, angle_out=outputs.get("angle"),
+                    dist_out=outputs.get("distance"), led_out=outputs.get("led"),
+                    speed_out=outputs.get("speed"),
                 )
-
-        return frame
+        from videoprocessing.drone_overlay import draw_drones
+        return draw_drones(frame, self.last_drone_detections, self.last_drone_features)

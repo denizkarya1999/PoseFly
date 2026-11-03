@@ -22,48 +22,26 @@ import ultralytics.nn.tasks as tasks
 tasks.LSA = LSA
 tasks.SE = SE
 
+DEFAULT_MODEL = "models/IndoorModels/Posefly.pt"
+
+
 class DroneDetector:
-    def __init__(self, model_path="models/OutdoorModels/PoseFly_Outdoor_Drone_Detection_YOLO_v26m_with_Self_Attention_and_C3K2_SA.pt"):
+    def __init__(self, model_path=DEFAULT_MODEL):
         model_path = Path(__file__).parent / model_path
+        if not model_path.is_file():
+            raise FileNotFoundError(f"Drone model not found: {model_path}")
         self.model = YOLO(model_path)
 
-    # -------------------------------------------------
-    # Resize: Fill (with center crop) → 512x512
-    # -------------------------------------------------
-    def resize_fill_512(self, image):
-        target = 512
-        h, w = image.shape[:2]
-
-        # Scale so that the smaller side becomes 512
-        scale = target / min(h, w)
-
-        new_w = int(round(w * scale))
-        new_h = int(round(h * scale))
-
-        resized = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-        # Center crop to 512x512
-        start_x = (new_w - target) // 2
-        start_y = (new_h - target) // 2
-
-        cropped = resized[start_y:start_y + target, start_x:start_x + target]
-
-        return cropped
-
     def detect(self, frame, conf_threshold=0.1, iou=0.7, return_preprocessed=False):
-        # Apply resize-fill preprocessing (optional)
-        frame = self.resize_fill_512(frame)
-
-        # Run inference
+        if (not isinstance(frame, np.ndarray) or frame.ndim != 3
+                or frame.shape[2] != 3 or frame.size == 0 or frame.dtype != np.uint8):
+            raise ValueError("Drone detection requires a nonempty uint8 BGR image.")
+        # Let YOLO letterbox the entire image and return source-image coordinates.
+        # A center crop excluded drones at the sides of widescreen camera frames.
         result = self.model.predict(
-            frame,
-            iou = iou,
-            imgsz=512,
-            conf=conf_threshold,
-            verbose=False
+            frame, iou=iou, imgsz=640, conf=conf_threshold, verbose=False,
         )[0]
-
         if return_preprocessed:
+            # Results and this image share the same original coordinate system.
             return result, frame
-
         return result

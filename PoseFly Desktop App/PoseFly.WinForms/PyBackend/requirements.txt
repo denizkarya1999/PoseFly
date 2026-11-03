@@ -1,0 +1,7 @@
+# Python 3.10+. Tkinter is installed through the OS package manager.
+numpy>=1.26,<3
+opencv-python>=4.8,<5
+Pillow>=10,<13
+matplotlib>=3.8,<4
+# YOLO26 checkpoints require a YOLO26-capable release.
+ultralytics>=8.4.56,<9
