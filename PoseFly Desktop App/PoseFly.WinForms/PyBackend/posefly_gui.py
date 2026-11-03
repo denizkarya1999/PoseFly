@@ -22,6 +22,8 @@ from result_logging import ResultLogWriter
 from videoprocessing.drone_overlay import draw_recent_drones, feature_values
 
 from camera.discovery import list_available_cameras
+from camera.feature_capture import FeatureCapture, SETTLE_FRAMES
+from machinelearning.model_profiles import FEATURE_MODELS
 
 ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "PoseFly.png"
 PROJECT_URL = "https://github.com/denizkarya1999/PoseFly"
@@ -91,6 +93,7 @@ class PoseFlyGUI:
         self._analysis_finished_at = None
         self._stop_event = threading.Event()
         self._capture_wakeup = threading.Event()
+        self._feature_capture = None
         self._live_fps = 60.0
         self._fps_after_id = None
         self._scan_thread = None
@@ -334,6 +337,8 @@ class PoseFlyGUI:
         self.camera_settings_status = ttk.Label(exposure, text="1000 = 1/1000 s exposure.\nISO requires camera support.",
                                                 style="Muted.TLabel", wraplength=280, justify="left")
         self.camera_settings_status.grid(row=3, column=0, columnspan=2, sticky="w", pady=(12, 2))
+        ttk.Label(exposure, text="These settings control the preview and drone detection. Feature models use separate captures at their training exposure.",
+                  style="Muted.TLabel", wraplength=280).grid(row=4, column=0, columnspan=2, sticky="w", pady=(8, 2))
 
         ttk.Label(detection_tab, text="Drone model", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
         ttk.Combobox(detection_tab, values=list(DRONE_MODELS), textvariable=self.drone_model_var,
@@ -353,6 +358,14 @@ class PoseFlyGUI:
         switches.bind("<Configure>", lambda _event: self._fit_sidebar())
         ttk.Label(detection_tab, text="All features stay visible. N/A means no estimate is available, including when a model is off or still running.",
                   style="Muted.TLabel", wraplength=300).grid(row=4, column=0, sticky="w", pady=(10, 0))
+
+        ttk.Label(detection_tab, text="Feature training exposure", style="Heading.TLabel").grid(row=5, column=0, sticky="w", pady=(16, 4))
+        preset_text = "Outdoor checkpoints\n" + "\n".join(
+            f"{preset.label}: 1/{preset.shutter_hz:g} s · ISO {preset.iso}" for preset in FEATURE_MODELS.values())
+        ttk.Label(detection_tab, text=preset_text, style="Muted.TLabel", wraplength=300).grid(row=6, column=0, sticky="w")
+        self.feature_exposure_status = ttk.Label(detection_tab, text="Actual feature exposure appears after a drone is detected.",
+                                                 style="Muted.TLabel", wraplength=300)
+        self.feature_exposure_status.grid(row=7, column=0, sticky="w", pady=(10, 0))
 
         ttk.Label(recording_tab, text="Recording", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.save_check = ttk.Checkbutton(recording_tab, text="Save analysis video", variable=self.save_var)
@@ -886,6 +899,8 @@ class PoseFlyGUI:
             self._capture_wakeup.clear()
             if self._stop_event.is_set():
                 return
+            if self._feature_capture is not None and self._feature_capture.pending():
+                return
             delay = 1.0 / self._settings[4] - (time.monotonic() - started)
             if delay <= 0 or not self._capture_wakeup.wait(delay):
                 return
@@ -896,6 +911,10 @@ class PoseFlyGUI:
         analysis_thread = None
         analysis_errors = []
         try:
+            feature_capture = self._feature_capture = FeatureCapture(
+                self._stop_event, self._capture_wakeup,
+                lambda report: self._events.put(("feature_camera_settings", report)))
+            self.backend.cv.feature_frame_provider = feature_capture.request
             self.backend.open_camera(camera_index=cam_idx, use_dshow=use_dshow)
             self.backend.apply_camera_settings_led_id()
             analysis_thread = threading.Thread(
@@ -915,11 +934,27 @@ class PoseFlyGUI:
                 if live_fps != measured_target:
                     measured_since, frame_count = t0, 0
                     measured_target = live_fps
+                restore_exposure = feature_capture.serve(self.backend)
+                if restore_exposure:
+                    applied_rs = None
+                if self._stop_event.is_set():
+                    break
                 request = (use_rs, iso, shz, self._rs_request)
                 if applied_rs != request:
                     report = self.backend.set_rollingshutter(iso, shz, enabled=use_rs)
                     self._events.put(("camera_settings", str(report)))
                     applied_rs = request
+                    feature_capture.exposure_changed = False
+                if restore_exposure:
+                    # Exclude transition frames from the normal preview/drone detector.
+                    for _ in range(SETTLE_FRAMES):
+                        if self._stop_event.is_set():
+                            break
+                        ok, frame = self.backend.read_frame()
+                        if not ok or frame is None:
+                            raise RuntimeError("Camera stopped while restoring preview exposure.")
+                if self._stop_event.is_set():
+                    break
                 ok, frame = self.backend.read_frame()
                 if not ok or frame is None:
                     raise RuntimeError("Failed to read frame; check the camera connection.")
@@ -943,6 +978,14 @@ class PoseFlyGUI:
             frames.close()
             if analysis_thread is not None:
                 analysis_thread.join()
+            if self._feature_capture is not None and self._feature_capture.exposure_changed:
+                try:
+                    _, use_rs, iso, shz, _ = self._settings
+                    self.backend.set_rollingshutter(iso, shz, enabled=use_rs)
+                except Exception as exc:
+                    error = error or str(exc)
+            self.backend.cv.feature_frame_provider = None
+            self._feature_capture = None
             if analysis_errors:
                 error = error or analysis_errors[0]
             # Both workers are finished before capture/writer/log resources are closed.
@@ -986,6 +1029,8 @@ class PoseFlyGUI:
                 self.status.config(text=value)
             elif kind == "camera_settings":
                 self.camera_settings_status.config(text=value)
+            elif kind == "feature_camera_settings":
+                self.feature_exposure_status.config(text="Feature capture: " + value)
             elif kind == "logging":
                 generation, state, rows, detail = value
                 if generation == self._log_generation:

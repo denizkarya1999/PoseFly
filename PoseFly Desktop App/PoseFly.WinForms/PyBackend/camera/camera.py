@@ -84,8 +84,11 @@ class Camera:
     def rollingshutter(self, iso: int, shutter_hz: float, enabled=True):
         if not math.isfinite(float(shutter_hz)) or float(shutter_hz) <= 0:
             raise ValueError("Shutter reciprocal must be finite and positive.")
-        self.iso = int(max(50, min(6400, iso)))
-        self.shutter_hz = float(max(5, min(6000, shutter_hz)))
+        if not math.isfinite(float(iso)) or float(iso) < 1:
+            raise ValueError("ISO must be finite and positive.")
+        # Preserve the checkpoint's request; the driver applies its actual limits.
+        self.iso = int(iso)
+        self.shutter_hz = float(shutter_hz)
         if self.cap is None:
             return "Camera not opened"
         if platform.system() == "Linux":

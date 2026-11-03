@@ -150,6 +150,23 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   Real rolling-shutter bands depend on the sensor, exposure time and LED modulation.
   See the [Linux camera control reference](https://docs.kernel.org/userspace-api/media/v4l/ext-ctrls-camera.html)
   for the exposure and ISO units used by the driver.
+- GNU/Linux live feature inference uses each loaded checkpoint's training exposure. The
+  bundled **Outdoor Angle, Distance, LED ID and Speed** checkpoints all use
+  **1/6000 s, ISO 1000**, as recorded for their March 3, 2026 training run.
+  Earlier ISO 800 settings (including the older 1/6400 s speed dataset) belong
+  to earlier datasets and are not applied to these Outdoor checkpoints.
+  The Detection tab lists the presets and the camera's actual feature exposure.
+  The Indoor/Outdoor **drone** selector continues to select only the drone model.
+- After finding a drone in a regular-exposure frame, the capture worker requests
+  a separate real frame at the feature model's exposure, discards transition
+  frames, then restores the user's preview/drone exposure. Models with the same
+  preset share that capture; different presets use separate captures. Feature
+  images are cropped to the drone's last detected location and are captured
+  slightly later, so rapid motion can reduce feature accuracy. Preview holds its
+  last normal frame during the exposure switch, then continues while inference
+  runs. No synthetic rolling-shutter stripes or artificial ISO gain are applied.
+  The camera may round exposure or lack ISO control; the actual result is shown,
+  and exact agreement with the training settings depends on the camera hardware.
 - **Logging is off by default.** In **Logs**, choose a CSV destination and click
   **Start logging** to opt in. Merely opening the app, choosing a file, or starting
   the camera does not create a log. **Stop logging** finishes the file while the
@@ -158,6 +175,8 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   model, bounding boxes, confidence values (0–1), and all four feature estimates.
   Each detected drone gets a row; frames without a drone get a row with **N/A**
   values. Missing or disabled feature estimates also use **N/A**.
+  The capture timestamp identifies the drone-detection frame; live feature
+  estimates come from the subsequent exposure-specific capture described above.
   A compatible CSV file is appended to, preserving existing rows; unrelated files
   are rejected. File writes run separately from capture and inference. Storage
   errors or an excessive backlog stop logging and appear in Logs, without stopping

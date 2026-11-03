@@ -6,6 +6,7 @@ import sys
 import subprocess
 
 from importlib import import_module
+from machinelearning.model_profiles import FEATURE_MODELS
 
 # Import and load only enabled models, on the pipeline worker rather than the UI.
 DETECTORS = {
@@ -39,6 +40,7 @@ class ComputerVision:
         self._iter = 0
         self.last_drone_detections = []
         self.last_drone_features = []
+        self.feature_frame_provider = None  # Live GUI supplies hardware-captured frames.
 
         # Prevent accidental multiple launches
         self._trajectory_already_run = False
@@ -278,12 +280,23 @@ class ComputerVision:
         # Publish drone boxes before loading/running the slower feature models.
         if on_detections is not None:
             on_detections(list(self.last_drone_detections))
+        feature_frames = {}
         for x1, y1, x2, y2, confidence in self.last_drone_detections:
-            # Every submodel receives the same untouched camera crop.
-            crop = frame[y1:y2, x1:x2].copy()
             outputs, features = {}, {}
             for name in ("angle", "distance", "led", "speed"):
                 if toggles.get(name, True):
+                    source = frame
+                    if self.feature_frame_provider is not None:
+                        preset = FEATURE_MODELS[name]
+                        key = (preset.iso, preset.shutter_hz)
+                        if key not in feature_frames:
+                            feature_frames[key] = self.feature_frame_provider(name)
+                        source = feature_frames[key]
+                    if source is None or source.shape[:2] != (h, w):
+                        features[name] = (None, None)
+                        continue
+                    # Reuse one natural capture only for models with identical presets.
+                    crop = source[y1:y2, x1:x2].copy()
                     outputs[name] = self._detector(name).detect(crop)
                     features[name] = self._best_item(outputs[name])
             self.last_drone_features.append(features)
