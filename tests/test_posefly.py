@@ -479,11 +479,70 @@ class GuiTests(unittest.TestCase):
         for widget in (*session_controls, self.app.cam_dropdown, self.app.btn_start):
             self.assertTrue(widget.instate(['disabled']))
         self.assertTrue(self.app.btn_stop.instate(['!disabled']))
+        self.assertTrue(self.app.live_fps_entry.instate(['!disabled']))
         self.app._set_buttons(False)
         for widget in (*session_controls, self.app.btn_start):
             self.assertTrue(widget.instate(['!disabled']))
         self.assertTrue(self.app.cam_dropdown.instate(['readonly', '!disabled']))
         self.assertTrue(self.app.btn_stop.instate(['disabled']))
+
+    def test_live_fps_changes_capture_pacing_without_reopening_or_changing_recording(self):
+        backend = Mock()
+        reads, owners = [], []
+        def read():
+            reads.append(time.monotonic())
+            owners.append(threading.get_ident())
+            return True, np.zeros((48, 64, 3), np.uint8)
+        backend.read_frame.side_effect = read
+        backend.process_frame.side_effect = lambda frame, toggles, on_detections=None: frame
+        backend.drone_detections.return_value = []
+        backend.drone_features.return_value = []
+        self.app.backend = backend
+        self.app.save_var.set(True)
+        self.app.fps_var.set('25')
+        self.app.live_fps_var.set('1')
+        try:
+            self.app.start()
+            worker = self.app._thread
+            self.pump(lambda: backend.write_frame_if_enabled.call_count >= 1)
+            self.assertTrue(self.app.live_fps_entry.instate(['!disabled']))
+            # Typing applies automatically and interrupts the old one-second wait.
+            self.app.live_fps_var.set('60')
+            self.pump(lambda: self.app._live_fps == 60)
+            marker = len(reads)
+            self.pump(lambda: len(reads) >= marker + 5, timeout=.6)
+            self.assertLess(float(np.median(np.diff(reads[marker:marker + 5]))), .05)
+            # Lowering the target also takes effect in the same capture session.
+            self.app.live_fps_var.set('12')
+            self.pump(lambda: self.app._live_fps == 12)
+            marker = len(reads)
+            self.pump(lambda: len(reads) >= marker + 5)
+            self.assertGreater(float(np.median(np.diff(reads[marker:marker + 5]))), .06)
+            self.assertIs(self.app._thread, worker)
+            self.assertEqual(set(owners), {worker.ident})
+            backend.open_camera.assert_called_once()
+            self.assertTrue(all(call.args[3] == 25. for call in backend.write_frame_if_enabled.call_args_list))
+            backend.release_writer.assert_not_called()
+            # Stop also wakes the pacing wait instead of waiting for another frame.
+            self.app.live_fps_var.set('1')
+            self.app.apply_live_fps()
+            self.app.stop()
+            worker.join(.6)
+            self.assertFalse(worker.is_alive())
+        finally:
+            self.app.stop()
+            self.app._thread.join(3)
+
+    def test_invalid_live_fps_keeps_last_valid_target(self):
+        self.app.live_fps_var.set('29.97')
+        self.assertTrue(self.app.apply_live_fps())
+        for value in ('', '0', '-1', '241', 'nan', 'inf', 'invalid'):
+            with self.subTest(value=value):
+                self.app.live_fps_var.set(value)
+                self.assertFalse(self.app.apply_live_fps())
+                self.assertEqual(self.app._live_fps, 29.97)
+                self.assertEqual(self.app._settings[4], 29.97)
+                self.assertIn('Keeping target 29.97', self.app.live_fps_status['text'])
 
     def test_small_window_keeps_results_visible_and_settings_scrollable(self):
         self.root.geometry('920x600')

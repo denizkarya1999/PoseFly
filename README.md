@@ -125,7 +125,14 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   Unavailable, pending, or disabled feature estimates show **N/A** in both the
   preview labels and the table. When no drone is detected, all table values
   become **N/A**. Additional drone rows can be scrolled without hiding columns.
-- **FPS** sets the capture-loop target and recorded analysis video's playback FPS.
+- **Live FPS target** in the Camera tab sets the live capture/preview target
+  from 1 to 240 FPS, including fractional rates such as 29.97. Change it while
+  the camera is running: arrows apply immediately, and typed values apply after
+  a short pause or on Enter. The camera session stays open. Invalid input keeps
+  the last valid target. Actual FPS depends on the camera, exposure, and processing
+  capacity; the preview reports the measured rate alongside the target.
+- **Recording playback FPS** is a separate setting in the Recording tab, fixed
+  for the current session. Live rate changes leave an active recording's FPS intact.
   **Save analysis video** saves full frames with drone boxes and features at detection speed.
   If detection runs below the chosen FPS, that recording plays faster than real
   time. The preview shows separate capture and detection rates.

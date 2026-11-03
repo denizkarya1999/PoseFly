@@ -53,7 +53,7 @@ class ScaledLayoutTests(unittest.TestCase):
                                 page, scrollbar, actions = app._settings_layouts[index]
                                 self.assertGreaterEqual(page.winfo_width(), page.winfo_reqwidth())
                                 if index == 0:
-                                    buttons = (app.btn_refresh, app.btn_apply_rs)
+                                    buttons = (app.live_fps_entry, app.btn_refresh, app.btn_apply_rs)
                                 elif index == 1:
                                     buttons = app.feature_switches
                                 else:

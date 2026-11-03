@@ -140,6 +140,9 @@ class PoseFlyGUI:
         self._analysis_seconds = 0.0
         self._analysis_finished_at = None
         self._stop_event = threading.Event()
+        self._capture_wakeup = threading.Event()
+        self._live_fps = 60.0
+        self._fps_after_id = None
         self._scan_thread = None
         self._settings = None
         self._running = False
@@ -173,6 +176,7 @@ class PoseFlyGUI:
         self.use_dshow_var = tk.BooleanVar(value=(platform.system() == "Windows"))
 
         self.fps_var = tk.StringVar(value="60")
+        self.live_fps_var = tk.StringVar(value="60")
         self.save_var = tk.BooleanVar(value=True)
         self.out_path_var = tk.StringVar(value=default_output_path())
 
@@ -337,10 +341,22 @@ class PoseFlyGUI:
         ttk.Label(source_row, text="Camera index").pack(side="left", padx=(0, 12))
         self.cam_index_entry = ttk.Spinbox(source_row, from_=0, to=999, width=5, textvariable=self.cam_index_var)
         self.cam_index_entry.pack(side="left")
+        rate_row = ttk.Frame(camera_actions)
+        rate_row.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 4))
+        ttk.Label(rate_row, text="Live FPS target").pack(side="left", padx=(0, 12))
+        self.live_fps_entry = ttk.Spinbox(rate_row, from_=1, to=240, increment=1, width=7,
+                                         textvariable=self.live_fps_var, command=self.apply_live_fps)
+        self.live_fps_entry.pack(side="left")
+        self.live_fps_entry.bind("<Return>", lambda _event: self.apply_live_fps())
+        self.live_fps_entry.bind("<FocusOut>", lambda _event: self.apply_live_fps())
+        self.live_fps_var.trace_add("write", self._schedule_apply_live_fps)
+        self.live_fps_status = ttk.Label(camera_actions, text="1–240 FPS · applies live; camera limits apply.",
+                                         style="Muted.TLabel", wraplength=300)
+        self.live_fps_status.grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 8))
         self.btn_refresh = ttk.Button(camera_actions, text="Scan cameras", command=self.refresh_cameras)
-        self.btn_refresh.grid(row=0, column=0, sticky="ew", padx=(0, 8))
+        self.btn_refresh.grid(row=2, column=0, sticky="ew", padx=(0, 8))
         self.btn_apply_rs = ttk.Button(camera_actions, text="Apply exposure", command=self.apply_rs, state="disabled")
-        self.btn_apply_rs.grid(row=0, column=1, sticky="ew")
+        self.btn_apply_rs.grid(row=2, column=1, sticky="ew")
         camera_actions.columnconfigure((0, 1), weight=1, uniform="camera_actions")
         self.chk_dshow = ttk.Checkbutton(camera_tab, text="Use DirectShow", variable=self.use_dshow_var)
         if platform.system() == "Windows":
@@ -388,7 +404,7 @@ class PoseFlyGUI:
         ttk.Label(recording_tab, text="Recording", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.save_check = ttk.Checkbutton(recording_tab, text="Save analysis video", variable=self.save_var)
         self.save_check.grid(row=1, column=0, sticky="w")
-        ttk.Label(recording_tab, text="Capture / playback FPS").grid(row=2, column=0, sticky="w", pady=(10, 4))
+        ttk.Label(recording_tab, text="Recording playback FPS").grid(row=2, column=0, sticky="w", pady=(10, 4))
         self.fps_entry = ttk.Entry(recording_tab, textvariable=self.fps_var, width=9)
         self.fps_entry.grid(row=3, column=0, sticky="w")
         ttk.Label(recording_tab, text="Output file").grid(row=4, column=0, sticky="w", pady=(16, 4))
@@ -657,6 +673,31 @@ class PoseFlyGUI:
         if path:
             self.out_path_var.set(path)
 
+    def _schedule_apply_live_fps(self, *_args):
+        if self._fps_after_id:
+            self.root.after_cancel(self._fps_after_id)
+        self._fps_after_id = self.root.after(200, self.apply_live_fps)
+
+    def apply_live_fps(self):
+        if self._fps_after_id:
+            self.root.after_cancel(self._fps_after_id)
+            self._fps_after_id = None
+        try:
+            fps = float(self.live_fps_var.get())
+            if not math.isfinite(fps) or not 1 <= fps <= 240:
+                raise ValueError
+        except (ValueError, tk.TclError):
+            self.live_fps_status.configure(text=f"Enter 1–240 FPS. Keeping target {self._live_fps:g} FPS.")
+            return False
+        changed = fps != self._live_fps
+        self._live_fps = fps
+        self._snapshot_settings()
+        if changed:
+            # Wake a low-FPS wait immediately; the worker recomputes its deadline.
+            self._capture_wakeup.set()
+        self.live_fps_status.configure(text=f"Target {fps:g} FPS · applies live; camera limits apply.")
+        return True
+
     # --------------------------------------------------------
     # Rolling shutter handling
     # --------------------------------------------------------
@@ -727,6 +768,8 @@ class PoseFlyGUI:
     def start(self):
         if self._closing or (self._thread and self._thread.is_alive()):
             return
+        if not self.apply_live_fps():
+            return
 
         try:
             cam_idx = self._selected_camera_index()
@@ -758,6 +801,7 @@ class PoseFlyGUI:
             return
         self._snapshot_settings()
         self._stop_event.clear()
+        self._capture_wakeup.clear()
         with self._frame_lock:
             self._latest_frame = None
             self._display_frame = None
@@ -788,6 +832,7 @@ class PoseFlyGUI:
 
     def stop(self):
         self._stop_event.set()
+        self._capture_wakeup.set()
         self._running = False
         self.status.config(text="Status: Stopping...")
         self.btn_stop.config(state="disabled", text="Stopping…")
@@ -798,7 +843,7 @@ class PoseFlyGUI:
             {"drone": self.tog_drone.get(), "angle": self.tog_angle.get(),
              "distance": self.tog_distance.get(), "led": self.tog_led.get(),
              "speed": self.tog_speed.get(), "drone_model": self.drone_model_var.get()},
-            self.use_rs_var.get(), self._rs_iso_cached, self._rs_shz_cached,
+            self.use_rs_var.get(), self._rs_iso_cached, self._rs_shz_cached, self._live_fps,
         )
 
     def _analysis_loop(self, frames, fps, out_path, save_video, errors):
@@ -809,7 +854,7 @@ class PoseFlyGUI:
                     break
                 frame, settings, captured_at = item
                 source_shape = frame.shape[:2]
-                toggles, use_rs, iso, shz = settings
+                toggles = settings[0]
                 started = time.monotonic()
                 def publish_detections(detections):
                     with self._frame_lock:
@@ -849,6 +894,18 @@ class PoseFlyGUI:
             errors.append(str(exc))
             traceback.print_exc()
             self._stop_event.set()
+            self._capture_wakeup.set()
+
+    def _wait_for_next_frame(self, started):
+        while True:
+            # Clear before reading settings/stop state so a concurrent change
+            # either appears in this read or wakes the subsequent wait.
+            self._capture_wakeup.clear()
+            if self._stop_event.is_set():
+                return
+            delay = 1.0 / self._settings[4] - (time.monotonic() - started)
+            if delay <= 0 or not self._capture_wakeup.wait(delay):
+                return
 
     def _pipeline_loop(self, cam_idx, use_dshow, fps, out_path, save_video, results_log_path):
         old_stdout = sys.stdout
@@ -869,13 +926,16 @@ class PoseFlyGUI:
             )
             analysis_thread.start()
             self._set_status_threadsafe("Status: Live camera running; AI analysis runs separately")
-            target_dt = 1.0 / fps
             applied_rs = None
+            measured_target = None
             measured_since, frame_count = time.monotonic(), 0
             while not self._stop_event.is_set():
                 t0 = time.monotonic()
                 settings = self._settings
-                _, use_rs, iso, shz = settings
+                _, use_rs, iso, shz, live_fps = settings
+                if live_fps != measured_target:
+                    measured_since, frame_count = t0, 0
+                    measured_target = live_fps
                 request = (use_rs, iso, shz, self._rs_request)
                 if applied_rs != request:
                     report = self.backend.set_rollingshutter(iso, shz, enabled=use_rs)
@@ -895,7 +955,7 @@ class PoseFlyGUI:
                     with self._frame_lock:
                         self._camera_fps = frame_count / elapsed
                     measured_since, frame_count = time.monotonic(), 0
-                self._stop_event.wait(max(0, target_dt - (time.monotonic() - t0)))
+                self._wait_for_next_frame(t0)
         except Exception as exc:
             error = str(exc)
             traceback.print_exc()
@@ -943,6 +1003,7 @@ class PoseFlyGUI:
     def _ui_tick(self):
         if self._closing:
             return
+        tick_started = time.monotonic()
         self._snapshot_settings()
         while not self._events.empty():
             kind, value = self._events.get_nowait()
@@ -1009,7 +1070,7 @@ class PoseFlyGUI:
             rate = 1.0 / max(analysis_seconds, 0.000001)
             age = time.monotonic() - analyzed_at
             analysis_text = f"{rate:.1f} FPS | last result {age:.1f}s ago"
-        self.performance.config(text=f"Camera: {camera_fps:.1f} FPS | Detection: {analysis_text}")
+        self.performance.config(text=f"Camera: {camera_fps:.1f} FPS (target {self._live_fps:g}) | Detection: {analysis_text}")
         rows = []
         if not self.tog_drone.get():
             summary = "Drone detection is off; feature models are paused."
@@ -1025,7 +1086,11 @@ class PoseFlyGUI:
                 rows.append((f"Drone {index + 1}", f"{detection[4]:.0%}", *values))
         self._update_feature_rows(rows)
         self.feature_summary.config(text=summary + "  •  N/A = no estimate available.")
-        self._ui_after_id = self.root.after(33, self._ui_tick)
+        # Keep controls/results responsive at low capture rates and allow the
+        # preview to refresh above 30 FPS when the camera and machine can do so.
+        interval = 1.0 / max(30.0, self._live_fps)
+        delay_ms = max(1, math.ceil(1000 * (interval - (time.monotonic() - tick_started))))
+        self._ui_after_id = self.root.after(delay_ms, self._ui_tick)
 
     @staticmethod
     def _preview_image(frame, size):
@@ -1050,6 +1115,9 @@ class PoseFlyGUI:
         if self._rs_after_id:
             self.root.after_cancel(self._rs_after_id)
             self._rs_after_id = None
+        if self._fps_after_id:
+            self.root.after_cancel(self._fps_after_id)
+            self._fps_after_id = None
         self._wait_for_shutdown()
 
     def _wait_for_shutdown(self):
