@@ -10,7 +10,7 @@ import queue
 import webbrowser
 from pathlib import Path
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, font as tkfont, messagebox, ttk
 
 import cv2
 import numpy as np
@@ -280,7 +280,8 @@ class PoseFlyGUI:
         self.btn_stop = ttk.Button(actions, text="Stop camera", command=self.stop, state="disabled", style="Stop.TButton", width=14)
         self.btn_focus = ttk.Button(actions, text="Focus preview", command=self.toggle_focus_preview, width=15)
         self.btn_fullscreen = ttk.Button(actions, text="Full screen", command=self.toggle_fullscreen, width=16)
-        for column, button in enumerate((self.btn_start, self.btn_stop, self.btn_focus, self.btn_fullscreen)):
+        self._toolbar_buttons = (self.btn_start, self.btn_stop, self.btn_focus, self.btn_fullscreen)
+        for column, button in enumerate(self._toolbar_buttons):
             button.grid(row=0, column=column, padx=(0, 12), sticky="w")
         header.bind("<Configure>", self._layout_toolbar)
 
@@ -295,7 +296,8 @@ class PoseFlyGUI:
         video_header = ttk.Frame(video, padding=(2, 4, 2, 8))
         video_header.grid(row=0, column=0, sticky="ew")
         video_header.columnconfigure(1, weight=1)
-        ttk.Label(video_header, text="Live preview", style="Heading.TLabel").grid(row=0, column=0, sticky="w")
+        self.preview_title = ttk.Label(video_header, text="Live preview", style="Heading.TLabel")
+        self.preview_title.grid(row=0, column=0, sticky="w")
         self.performance = ttk.Label(video_header, text="Camera: — | Detection: —", style="Muted.TLabel", anchor="e")
         self.performance.grid(row=0, column=1, sticky="e", padx=(12, 0))
         self.preview = tk.Canvas(video, background="#060c16", highlightthickness=1,
@@ -318,8 +320,12 @@ class PoseFlyGUI:
         self.settings_tabs = ttk.Notebook(self.sidebar)
         self.settings_tabs.grid(row=0, column=0, sticky="nsew")
         self._scroll_canvases = []
+        self._settings_layouts = []
         camera_tab, camera_actions = self._add_settings_page("Camera")
-        detection_tab, _ = self._add_settings_page("Detection")
+        detection_tab, detection_actions = self._add_settings_page("Detection")
+        # This page has no footer actions; do not reserve blank footer space
+        # that could push its model switches below the visible viewport.
+        detection_actions.grid_remove()
         recording_tab, recording_actions = self._add_settings_page("Recording")
 
         ttk.Label(camera_tab, text="Camera source", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 8))
@@ -364,7 +370,7 @@ class PoseFlyGUI:
         ttk.Combobox(detection_tab, values=list(DRONE_MODELS), textvariable=self.drone_model_var,
                      state="readonly", width=25).grid(row=1, column=0, sticky="ew")
         ttk.Label(detection_tab, text="Run models", style="Heading.TLabel").grid(row=2, column=0, sticky="w", pady=(16, 4))
-        switches = ttk.Frame(detection_tab)
+        switches = self._model_switches = ttk.Frame(detection_tab)
         switches.grid(row=3, column=0, sticky="ew")
         switches.columnconfigure((0, 1), weight=1)
         self.feature_switches = []
@@ -375,6 +381,7 @@ class PoseFlyGUI:
             row, column = (0, 0) if index == 0 else (1 + (index - 1) // 2, (index - 1) % 2)
             switch.grid(row=row, column=column, columnspan=2 if index == 0 else 1, sticky="w")
             self.feature_switches.append(switch)
+        switches.bind("<Configure>", lambda _event: self._fit_sidebar())
         ttk.Label(detection_tab, text="All features stay visible. N/A means no estimate is available, including when a model is off or still running.",
                   style="Muted.TLabel", wraplength=300).grid(row=4, column=0, sticky="w", pady=(10, 0))
 
@@ -394,7 +401,7 @@ class PoseFlyGUI:
                   style="Muted.TLabel", wraplength=300).grid(row=6, column=0, sticky="w", pady=(14, 0))
 
         # Results occupy the full window width and remain visible in focus mode.
-        results = ttk.LabelFrame(self.root, text="Drone features", padding=(10, 6))
+        results = self._results_panel = ttk.LabelFrame(self.root, text="Drone features", padding=(10, 6))
         results.grid(row=2, column=0, sticky="ew", padx=16, pady=(8, 0))
         results.columnconfigure(0, weight=1)
         self.feature_summary = ttk.Label(results, text="Waiting for drone detection. N/A = no estimate available.",
@@ -403,9 +410,13 @@ class PoseFlyGUI:
         columns = ("drone", "confidence", "angle", "distance", "led", "speed")
         self.feature_table = ttk.Treeview(results, columns=columns, show="headings", height=2, selectmode="browse")
         self.feature_table.grid(row=1, column=0, sticky="ew")
+        heading_font = tkfont.Font(root=self.root, font=ttk.Style(self.root).lookup("Treeview.Heading", "font"))
+        self._results_min_width = 60
         for name, title in zip(columns, ("Drone", "Confidence", "Angle", "Distance", "LED ID", "Speed")):
             self.feature_table.heading(name, text=title)
-            self.feature_table.column(name, width=130, minwidth=95, anchor="center", stretch=True)
+            minimum = max(95, heading_font.measure(title) + 40)
+            self._results_min_width += minimum
+            self.feature_table.column(name, width=max(130, minimum), minwidth=minimum, anchor="center", stretch=True)
         scrollbar = ttk.Scrollbar(results, command=self.feature_table.yview)
         scrollbar.grid(row=1, column=1, sticky="ns")
         self.feature_table.configure(yscrollcommand=scrollbar.set)
@@ -419,6 +430,7 @@ class PoseFlyGUI:
         self.root.bind("<F1>", lambda _event: self.show_about())
         for event_name in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self.root.bind(event_name, self._scroll_sidebar, add="+")
+        self.root.after_idle(self._fit_sidebar)
 
     def _configure_theme(self):
         style = ttk.Style(self.root)
@@ -460,8 +472,9 @@ class PoseFlyGUI:
         style.configure("Vertical.TScrollbar", background=BORDER, arrowcolor=TEXT, troughcolor=PANEL,
                         bordercolor=PANEL, lightcolor=BORDER, darkcolor=BORDER)
         style.map("Vertical.TScrollbar", background=[("active", "#526c90"), ("pressed", "#526c90")])
+        result_font = tkfont.Font(root=self.root, font=style.lookup("Treeview", "font"))
         style.configure("Treeview", background=PANEL, fieldbackground=PANEL, foreground=TEXT,
-                        rowheight=30, bordercolor=BORDER)
+                        rowheight=max(30, result_font.metrics("linespace") + 8), bordercolor=BORDER)
         style.configure("Treeview.Heading", background=FIELD, foreground=TEXT, padding=(8, 7),
                         font=("DejaVu Sans", 10, "bold"))
         style.map("Treeview", background=[("selected", "#24466e")], foreground=[("selected", "#ffffff")])
@@ -473,11 +486,41 @@ class PoseFlyGUI:
             self.root.option_add(f"*{option}", value)
 
     def _layout_toolbar(self, event):
-        needed = self._brand.winfo_reqwidth() + self._toolbar_actions.winfo_reqwidth() + self.btn_about.winfo_reqwidth() + 60
+        button_widths = [button.winfo_reqwidth() + 12 for button in self._toolbar_buttons]
+        needed = self._brand.winfo_reqwidth() + sum(button_widths) + self.btn_about.winfo_reqwidth() + 60
         if event.width >= needed:
             self._toolbar_actions.grid(row=0, column=1, columnspan=1, pady=0)
+            columns = len(self._toolbar_buttons)
         else:
             self._toolbar_actions.grid(row=1, column=0, columnspan=3, pady=(10, 0))
+            available = max(1, event.width - 36)
+            # Account for the widest button in each grid column, not only the
+            # sum of one row; enlarged fonts can require two or more rows.
+            for columns in range(len(self._toolbar_buttons), 0, -1):
+                if sum(max(button_widths[column::columns]) for column in range(columns)) <= available:
+                    break
+        for index, button in enumerate(self._toolbar_buttons):
+            button.grid(row=index // columns, column=index % columns,
+                        pady=(0, 8 if index // columns < (len(self._toolbar_buttons) - 1) // columns else 0))
+        self._fit_sidebar()
+
+    def _fit_sidebar(self):
+        # Canvas children do not contribute their natural size to the notebook.
+        # Measure them explicitly: fonts scale with DPI, fixed pixel widths do not.
+        width = max(370, self.settings_tabs.winfo_reqwidth() + 8)
+        for page, scrollbar, actions in self._settings_layouts:
+            width = max(width, page.winfo_reqwidth() + scrollbar.winfo_reqwidth() + 8,
+                        actions.winfo_reqwidth() + 8)
+        if int(self.sidebar.cget("width")) != width:
+            self.sidebar.configure(width=width)
+        screen_w, screen_h = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        selected_page = self.settings_tabs.nametowidget(self.settings_tabs.select())
+        tab_height = max(40, self.settings_tabs.winfo_height() - selected_page.winfo_height())
+        controls_height = self._model_switches.winfo_y() + self._model_switches.winfo_reqheight() + 12
+        minimum_height = max(640, self._header.winfo_reqheight() + self._results_panel.winfo_reqheight()
+                             + self.status.winfo_reqheight() + tab_height + controls_height + 8)
+        self.root.minsize(min(max(920, width + 320, self._results_min_width), screen_w - 60),
+                          min(minimum_height, screen_h - 80))
 
     def _add_settings_page(self, title):
         shell = ttk.Frame(self.settings_tabs)
@@ -492,10 +535,14 @@ class PoseFlyGUI:
         page.columnconfigure(0, weight=1)
         item = canvas.create_window(0, 0, window=page, anchor="nw")
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(item, width=event.width))
-        page.bind("<Configure>", lambda _event: canvas.configure(scrollregion=canvas.bbox("all")))
+        def resize_page(_event):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+            self._fit_sidebar()
+        page.bind("<Configure>", resize_page)
         # Actions are outside the scrolling content and always remain in view.
         actions = ttk.Frame(shell, padding=(10, 8))
         actions.grid(row=1, column=0, columnspan=2, sticky="ew")
+        self._settings_layouts.append((page, scrollbar, actions))
         self._scroll_canvases.append(canvas)
         self.settings_tabs.add(shell, text=title)
         return page, actions
@@ -566,7 +613,13 @@ class PoseFlyGUI:
         self.preview.coords(self._preview_item, *center)
         self.preview.coords(self._preview_placeholder, *center)
         self.preview.itemconfigure(self._preview_placeholder, width=max(100, event.width - 40))
-        self.performance.configure(wraplength=max(180, event.width - 140))
+        available = event.width - self.preview_title.winfo_reqwidth() - 20
+        if available < 200:
+            self.performance.grid(row=1, column=0, columnspan=2, sticky="ew", padx=0)
+            self.performance.configure(wraplength=max(1, event.width - 8), anchor="w")
+        else:
+            self.performance.grid(row=0, column=1, columnspan=1, sticky="ew", padx=(12, 0))
+            self.performance.configure(wraplength=available, anchor="e")
         self.preview_hint.configure(wraplength=max(180, event.width - 8))
         self.status.configure(wraplength=max(300, self.root.winfo_width() - 36))
         self.feature_summary.configure(wraplength=max(300, self.root.winfo_width() - 72))

@@ -88,6 +88,9 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   dialog. **About PoseFly** or **F1** opens the project information dialog.
   Action buttons wrap onto a separate toolbar row on smaller windows, retaining
   their full size. Camera and recording actions stay outside scrolling settings.
+  The sidebar measures the actual tab labels and controls at your display's text
+  scale. Larger fonts expand the sidebar, and toolbar buttons wrap into additional
+  rows when needed. Result rows and column headings also fit the scaled text.
 - The preview expands with the window and keeps the full image's proportions.
   **Focus preview** hides the settings sidebar for more viewing space.
   **Full screen** or **F11** fills the screen; **Esc** restores the controls and
