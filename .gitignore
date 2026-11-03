@@ -9,9 +9,15 @@
 bin/
 obj/
 
-# Python caches (optional)
+# Generated Python/tool caches
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.cache/
+.ipynb_checkpoints/
 
 # Local Python environment and generated recordings
 .venv/

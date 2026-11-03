@@ -182,31 +182,11 @@ Drone inference now uses the entire camera image at YOLO's 640-pixel inference
 size, preserving aspect ratio with padding. No center crop discards side regions;
 returned boxes already use the original camera coordinates.
 
-## Validation
+## Repository cleanup
 
-Hardware-free regression tests cover discovery, camera controls, MP4/AVI
-round-trips, output validation, detector coordinates, clean inference crops,
-lazy model loading, continuous preview during slow analysis, drone-gated feature estimates,
-hardware-control conversions/rejections, GUI worker shutdown, full feature/N/A
-display, button visibility, the About dialog, Linux taskbar identity, and optional
-CSV logging (opt-in, append, missing values, and storage errors).
-Run from the repository root:
-
-```sh
-.venv/bin/python -m unittest discover -s tests -v
-```
-
-For GUI tests on a headless Linux machine, install `xvfb` and `xauth`, then run:
-
-```sh
-xvfb-run -a .venv/bin/python -m unittest discover -s tests -v
-```
-
-GUI tests are skipped without `DISPLAY`. The regression suite also runs the
-actual default checkpoint on labelled drone photographs and a blank frame.
-These checks do not replace a live-webcam check. The scripts under `machinelearning/testing`
-are interactive dataset experiments, not the automated regression suite.
-
+Test and experiment folders are omitted from this checkout. Generated Python and
+tool caches are ignored; the GNU/Linux launcher disables Python bytecode writes.
+Training datasets and model weights are retained.
 
 ### Drone checkpoint validation
 
@@ -217,12 +197,3 @@ matched 1 of 40 annotated drones. The Indoor checkpoint using the full frame at
 at 640 matched 28 of 40. These are results on this included indoor dataset, not
 an estimate of accuracy in arbitrary scenes or of false positives on background
 footage. Original checkpoint files are preserved.
-
-Run the repeatable dataset evaluation from the project root:
-
-```sh
-.venv/bin/python tests/evaluate_drone_detector.py --model Indoor
-.venv/bin/python tests/evaluate_drone_detector.py --model Outdoor
-```
-
-The comparison is recorded in `tests/drone_detection_evaluation.json`.

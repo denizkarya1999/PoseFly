@@ -69,7 +69,12 @@ def set_exposure(controls, shutter_hz):
         steps = max(0, min((high - low) // step, round((requested - low) / step)))
         ticks = low + steps * step
         actual = controls.set(EXPOSURE_ABSOLUTE, ticks)
-        return f'Exposure {actual / 10:g} ms (requested {1000 / shutter_hz:g} ms)'
+        if actual <= 0:
+            raise OSError('Camera returned an invalid exposure')
+        report = f'Exposure {actual / 10:g} ms (1/{10000 / actual:g} s; requested 1/{shutter_hz:g} s)'
+        if abs(actual - requested) > 1e-6:
+            report += ' · adjusted to camera range/step'
+        return report
     except OSError:
         controls.set(EXPOSURE_AUTO, previous_mode)
         raise
