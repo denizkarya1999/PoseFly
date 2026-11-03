@@ -22,7 +22,6 @@ from result_logging import ResultLogWriter
 from videoprocessing.drone_overlay import draw_recent_drones, feature_values
 
 from camera.discovery import list_available_cameras
-from camera.feature_capture import FeatureCapture, SETTLE_FRAMES
 
 ICON_PATH = Path(__file__).resolve().parent.parent / "assets" / "PoseFly.png"
 PROJECT_URL = "https://github.com/denizkarya1999/PoseFly"
@@ -92,7 +91,6 @@ class PoseFlyGUI:
         self._analysis_finished_at = None
         self._stop_event = threading.Event()
         self._capture_wakeup = threading.Event()
-        self._feature_capture = None
         self._live_fps = 60.0
         self._fps_after_id = None
         self._scan_thread = None
@@ -104,10 +102,10 @@ class PoseFlyGUI:
 
         # Rolling-shutter auto-apply bookkeeping
         self._rs_after_id = None
-        self._last_rs_applied = (None, None)
+        self._last_rs_requested = None
         self._rs_request = 0
 
-        # Cached RS values used for GUI-side effect
+        # Cached user-selected camera exposure values.
         self._rs_iso_cached = 250
         self._rs_shz_cached = 1000.0
 
@@ -740,12 +738,16 @@ class PoseFlyGUI:
         if not self._running:
             return
 
-        if (not force) and self._last_rs_applied == (iso, shz):
+        request = (self.use_rs_var.get(), iso, shz)
+        if (not force) and self._last_rs_requested == request:
             return
 
+        self._last_rs_requested = request
         self._snapshot_settings()
         self._rs_request += 1
-        self.camera_settings_status.config(text=f"Applying ISO {iso}, exposure 1/{shz:g} s…")
+        self._capture_wakeup.set()
+        self.camera_settings_status.config(text=(f"Applying ISO {iso}, exposure 1/{shz:g} s…"
+                                                if request[0] else "Applying automatic exposure…"))
 
     def apply_rs(self):
         self._apply_rs_if_changed(force=True)
@@ -795,7 +797,7 @@ class PoseFlyGUI:
 
         self._running = True
         self._frame_count = 0
-        self._last_rs_applied = (None, None)
+        self._last_rs_requested = (self.use_rs_var.get(), iso, shz)
 
         self._set_buttons(True)
         self.preview.itemconfigure(self._preview_item, image="")
@@ -888,8 +890,6 @@ class PoseFlyGUI:
             self._capture_wakeup.clear()
             if self._stop_event.is_set():
                 return
-            if self._feature_capture is not None and self._feature_capture.pending():
-                return
             delay = 1.0 / self._settings[4] - (time.monotonic() - started)
             if delay <= 0 or not self._capture_wakeup.wait(delay):
                 return
@@ -900,8 +900,6 @@ class PoseFlyGUI:
         analysis_thread = None
         analysis_errors = []
         try:
-            feature_capture = self._feature_capture = FeatureCapture(self._stop_event, self._capture_wakeup)
-            self.backend.cv.feature_frame_provider = feature_capture.request
             self.backend.open_camera(camera_index=cam_idx, use_dshow=use_dshow)
             self.backend.apply_camera_settings_led_id()
             analysis_thread = threading.Thread(
@@ -921,27 +919,11 @@ class PoseFlyGUI:
                 if live_fps != measured_target:
                     measured_since, frame_count = t0, 0
                     measured_target = live_fps
-                restore_exposure = feature_capture.serve(self.backend)
-                if restore_exposure:
-                    applied_rs = None
-                if self._stop_event.is_set():
-                    break
                 request = (use_rs, iso, shz, self._rs_request)
                 if applied_rs != request:
                     report = self.backend.set_rollingshutter(iso, shz, enabled=use_rs)
                     self._events.put(("camera_settings", str(report)))
                     applied_rs = request
-                    feature_capture.exposure_changed = False
-                if restore_exposure:
-                    # Exclude transition frames from the normal preview/drone detector.
-                    for _ in range(SETTLE_FRAMES):
-                        if self._stop_event.is_set():
-                            break
-                        ok, frame = self.backend.read_frame()
-                        if not ok or frame is None:
-                            raise RuntimeError("Camera stopped while restoring preview exposure.")
-                if self._stop_event.is_set():
-                    break
                 ok, frame = self.backend.read_frame()
                 if not ok or frame is None:
                     raise RuntimeError("Failed to read frame; check the camera connection.")
@@ -965,14 +947,6 @@ class PoseFlyGUI:
             frames.close()
             if analysis_thread is not None:
                 analysis_thread.join()
-            if self._feature_capture is not None and self._feature_capture.exposure_changed:
-                try:
-                    _, use_rs, iso, shz, _ = self._settings
-                    self.backend.set_rollingshutter(iso, shz, enabled=use_rs)
-                except Exception as exc:
-                    error = error or str(exc)
-            self.backend.cv.feature_frame_provider = None
-            self._feature_capture = None
             if analysis_errors:
                 error = error or analysis_errors[0]
             # Both workers are finished before capture/writer/log resources are closed.

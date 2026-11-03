@@ -1,9 +1,10 @@
-"""Checkpoint-specific capture settings, independent of the ML runtime.
+"""Checkpoint paths and training metadata, independent of the ML runtime.
 
 Outdoor training record: 2026-03-03, PoseFly research conversation.
 All four outdoor feature datasets used 1/6000 s and ISO 1000.
 The older ISO 800 records refer to earlier datasets, not these checkpoints.
-Drone detection deliberately has no feature-exposure preset.
+Exposure values drive artificial preprocessing of each feature input only.
+Inference never changes the camera's exposure or the drone detector's input.
 """
 from dataclasses import dataclass
 

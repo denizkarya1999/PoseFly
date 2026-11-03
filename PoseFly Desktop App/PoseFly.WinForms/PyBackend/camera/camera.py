@@ -86,7 +86,7 @@ class Camera:
             raise ValueError("Shutter reciprocal must be finite and positive.")
         if not math.isfinite(float(iso)) or float(iso) < 1:
             raise ValueError("ISO must be finite and positive.")
-        # Preserve the checkpoint's request; the driver applies its actual limits.
+        # Preserve the user's request; the driver applies its actual limits.
         self.iso = int(iso)
         self.shutter_hz = float(shutter_hz)
         if self.cap is None:

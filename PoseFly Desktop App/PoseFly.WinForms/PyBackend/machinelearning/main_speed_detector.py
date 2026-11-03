@@ -22,8 +22,9 @@ tasks.SA = SE
 
 SPEED_LABELS = ["Fast", "Slow", "Static"]
 
-# This checkpoint and its hardware capture preset share one definition.
+# Per-model settings apply only to an inference image, never to the camera.
 from machinelearning.model_profiles import FEATURE_MODELS
+from machinelearning.shutter_preprocessing import simulate_shutter
 ISO = FEATURE_MODELS['speed'].iso
 SHUTTER_HZ = FEATURE_MODELS['speed'].shutter_hz
 
@@ -34,10 +35,10 @@ class SpeedDetector:
         self.model = YOLO(model_path)
 
     def detect(self, frame, conf=0.001, iou=0.7):
-        # Use the real camera exposure; do not synthesize stripes for inference.
+        model_frame = simulate_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ)
 
         r = self.model.predict(
-            frame,
+            model_frame,
             verbose=False,
             conf=conf,
             iou=iou,
