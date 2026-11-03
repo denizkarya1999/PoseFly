@@ -34,7 +34,7 @@ if [[ -z "${DISPLAY:-}" ]]; then
     exit 1
 fi
 export PYTHONUNBUFFERED=1
-# Register the taskbar identity and icon for this checkout, including after a move.
+# Register only the taskbar identity/icon; NoDisplay keeps it out of app menus.
 # A read-only home directory must not prevent the camera application from opening.
 "$PYTHON" "$PROJECT_DIR/linux/install_desktop.py" --quiet || true
 exec "$PYTHON" "$SCRIPT_DIR/posefly_gui.py" "$@"

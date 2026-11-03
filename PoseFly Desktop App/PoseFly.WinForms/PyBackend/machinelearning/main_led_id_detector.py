@@ -25,6 +25,7 @@ LED_LABELS = ["0001", "0101", "1001", "1110"]
 
 # Per-model settings apply only to an inference image, never to the camera.
 from machinelearning.model_profiles import FEATURE_MODELS
+from machinelearning.confidence import DEFAULT_CONFIDENCE
 from machinelearning.shutter_preprocessing import simulate_shutter
 ISO = FEATURE_MODELS['led'].iso
 SHUTTER_HZ = FEATURE_MODELS['led'].shutter_hz
@@ -35,7 +36,7 @@ class LEDDetector:
         model_path = Path(__file__).parent / model_path
         self.model = YOLO(model_path)
 
-    def detect(self, frame, conf=0.001, iou=0.7):
+    def detect(self, frame, conf=DEFAULT_CONFIDENCE["led"], iou=0.7):
         model_frame = simulate_shutter(frame, iso=ISO, shutter_hz=SHUTTER_HZ)
 
         r = self.model.predict(

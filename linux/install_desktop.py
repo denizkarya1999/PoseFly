@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Register this checkout in the current user's GNU/Linux application menu."""
+"""Register the taskbar icon without adding PoseFly to the application menu."""
 import argparse
 import os
 from pathlib import Path
@@ -26,7 +26,7 @@ def desktop_entry(project):
         '[Desktop Entry]', 'Version=1.0', 'Type=Application', 'Name=PoseFly',
         'Comment=Drone detection and optical sensing',
         'Exec=' + desktop_exec(project / 'PoseFly'),
-        'Icon=posefly', 'Terminal=false', 'Categories=Science;',
+        'Icon=posefly', 'Terminal=false', 'Categories=Science;', 'NoDisplay=true',
         'StartupNotify=false', 'StartupWMClass=Posefly', '',
     ])
 

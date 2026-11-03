@@ -8,5 +8,6 @@ Path=/home/denizkaryaacikbas/Projects/PoseFly
 Icon=/home/denizkaryaacikbas/Projects/PoseFly/PoseFly Desktop App/PoseFly.WinForms/assets/PoseFly.png
 Terminal=false
 Categories=Science;
+NoDisplay=true
 StartupNotify=false
 StartupWMClass=Posefly

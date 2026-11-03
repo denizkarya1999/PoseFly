@@ -16,6 +16,7 @@ import numpy as np
 from PIL import Image, ImageTk
 
 from backend import PipelineBackend
+from machinelearning.confidence import DEFAULT_CONFIDENCE, MODEL_LABELS, confidence_thresholds
 from videoprocessing.computer_vision import DRONE_MODELS
 from latest_frame import LatestFrame
 from result_logging import ResultLogWriter
@@ -81,6 +82,7 @@ class PoseFlyGUI:
         self._overlay_revision = 0
         self._displayed_overlay = None
         self._detections_model = None
+        self._detections_confidence = None
         self._detections = []
         self._features = []
         self._features_pending = False
@@ -93,6 +95,8 @@ class PoseFlyGUI:
         self._capture_wakeup = threading.Event()
         self._live_fps = 60.0
         self._fps_after_id = None
+        self._confidence_after_id = None
+        self._confidence = DEFAULT_CONFIDENCE.copy()
         self._scan_thread = None
         self._settings = None
         self._running = False
@@ -142,6 +146,8 @@ class PoseFlyGUI:
         self.tog_distance = tk.BooleanVar(value=True)
         self.tog_led = tk.BooleanVar(value=True)
         self.tog_speed = tk.BooleanVar(value=True)
+        self.confidence_vars = {name: tk.StringVar(value=f"{value * 100:g}")
+                                for name, value in self._confidence.items()}
 
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
@@ -279,9 +285,6 @@ class PoseFlyGUI:
         self._settings_layouts = []
         camera_tab, camera_actions = self._add_settings_page("Camera")
         detection_tab, detection_actions = self._add_settings_page("Detection")
-        # This page has no footer actions; do not reserve blank footer space
-        # that could push its model switches below the visible viewport.
-        detection_actions.grid_remove()
         recording_tab, recording_actions = self._add_settings_page("Recording")
         logging_tab, logging_actions = self._add_settings_page("Logs")
 
@@ -353,6 +356,33 @@ class PoseFlyGUI:
         switches.bind("<Configure>", lambda _event: self._fit_sidebar())
         ttk.Label(detection_tab, text="All features stay visible. N/A means no estimate is available, including when a model is off or still running.",
                   style="Muted.TLabel", wraplength=300).grid(row=4, column=0, sticky="w", pady=(10, 0))
+
+        ttk.Label(detection_tab, text="Minimum confidence (%)", style="Heading.TLabel").grid(
+            row=5, column=0, sticky="w", pady=(18, 8))
+        thresholds = ttk.Frame(detection_tab)
+        thresholds.grid(row=6, column=0, sticky="ew")
+        thresholds.columnconfigure(0, weight=1)
+        self.confidence_entries = {}
+        for row, (name, title) in enumerate(MODEL_LABELS.items()):
+            ttk.Label(thresholds, text=title).grid(row=row, column=0, sticky="w", padx=(0, 12), pady=5)
+            variable = self.confidence_vars[name]
+            entry = ttk.Spinbox(thresholds, from_=0, to=100, increment=0.1, width=8,
+                                textvariable=variable, command=self.apply_confidence)
+            entry.grid(row=row, column=1, sticky="e", pady=5)
+            entry.bind("<Return>", lambda _event: self.apply_confidence())
+            entry.bind("<FocusOut>", lambda _event: self.apply_confidence())
+            variable.trace_add("write", self._schedule_apply_confidence)
+            self.confidence_entries[name] = entry
+        ttk.Label(detection_tab, text="Higher values reject more predictions. Features below their threshold show N/A.",
+                  style="Muted.TLabel", wraplength=300).grid(row=7, column=0, sticky="w", pady=(10, 0))
+        self.confidence_status = ttk.Label(detection_actions, text="0–100% · applies live.",
+                                           style="Muted.TLabel", wraplength=300)
+        self.confidence_status.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 8))
+        self.btn_apply_confidence = ttk.Button(detection_actions, text="Apply thresholds", command=self.apply_confidence)
+        self.btn_apply_confidence.grid(row=1, column=0, sticky="ew", padx=(0, 8))
+        self.btn_reset_confidence = ttk.Button(detection_actions, text="Reset defaults", command=self.reset_confidence)
+        self.btn_reset_confidence.grid(row=1, column=1, sticky="ew")
+        detection_actions.columnconfigure((0, 1), weight=1, uniform="confidence_actions")
 
         ttk.Label(recording_tab, text="Recording", style="Heading.TLabel").grid(row=0, column=0, sticky="w", pady=(0, 6))
         self.save_check = ttk.Checkbutton(recording_tab, text="Save analysis video", variable=self.save_var)
@@ -716,6 +746,39 @@ class PoseFlyGUI:
         return True
 
     # --------------------------------------------------------
+    # Confidence thresholds (percentages in the UI, fractions for inference)
+    # --------------------------------------------------------
+    def _schedule_apply_confidence(self, *_args):
+        if self._confidence_after_id:
+            self.root.after_cancel(self._confidence_after_id)
+        self._confidence_after_id = self.root.after(200, self.apply_confidence)
+
+    def apply_confidence(self):
+        if self._confidence_after_id:
+            self.root.after_cancel(self._confidence_after_id)
+            self._confidence_after_id = None
+        values = {}
+        for name, variable in self.confidence_vars.items():
+            try:
+                value = float(variable.get())
+                if not math.isfinite(value) or not 0 <= value <= 100:
+                    raise ValueError
+                values[name] = value / 100.0
+            except (ValueError, tk.TclError):
+                self.confidence_status.configure(
+                    text=f"Enter 0–100% for {MODEL_LABELS[name]}. Keeping previous thresholds.", style="Error.TLabel")
+                return False
+        self._confidence = confidence_thresholds(values)
+        self._snapshot_settings()
+        self.confidence_status.configure(text="0–100% · applies live.", style="Muted.TLabel")
+        return True
+
+    def reset_confidence(self):
+        for name, value in DEFAULT_CONFIDENCE.items():
+            self.confidence_vars[name].set(f"{value * 100:g}")
+        self.apply_confidence()
+
+    # --------------------------------------------------------
     # Rolling shutter handling
     # --------------------------------------------------------
     def _read_rs_inputs(self) -> tuple[int, float]:
@@ -760,6 +823,8 @@ class PoseFlyGUI:
             return
         if not self.apply_live_fps():
             return
+        if not self.apply_confidence():
+            return
 
         try:
             cam_idx = self._selected_camera_index()
@@ -787,6 +852,7 @@ class PoseFlyGUI:
             self._latest_frame = None
             self._display_frame = None
             self._detections_model = None
+            self._detections_confidence = None
             self._overlay_revision += 1
             self._detections = []
             self._features = []
@@ -824,7 +890,8 @@ class PoseFlyGUI:
         self._settings = (
             {"drone": self.tog_drone.get(), "angle": self.tog_angle.get(),
              "distance": self.tog_distance.get(), "led": self.tog_led.get(),
-             "speed": self.tog_speed.get(), "drone_model": self.drone_model_var.get()},
+             "speed": self.tog_speed.get(), "drone_model": self.drone_model_var.get(),
+             "confidence": self._confidence.copy()},
             self.use_rs_var.get(), self._rs_iso_cached, self._rs_shz_cached, self._live_fps,
         )
 
@@ -842,6 +909,7 @@ class PoseFlyGUI:
                     with self._frame_lock:
                         self._detections = list(detections)
                         self._detections_model = toggles.get("drone_model", "Indoor")
+                        self._detections_confidence = toggles["confidence"]
                         self._overlay_revision += 1
                         self._features = []
                         self._features_pending = bool(detections)
@@ -864,6 +932,7 @@ class PoseFlyGUI:
                     detections = self.backend.drone_detections()
                     self._detections = list(detections) if isinstance(detections, (list, tuple)) else []
                     self._detections_model = toggles.get("drone_model", "Indoor")
+                    self._detections_confidence = toggles["confidence"]
                     self._overlay_revision += 1
                     features = self.backend.drone_features()
                     self._features = list(features) if isinstance(features, (list, tuple)) else []
@@ -1014,6 +1083,7 @@ class PoseFlyGUI:
             frame, self._latest_frame = self._latest_frame, None
             detections = self._detections
             detections_model = self._detections_model
+            detections_confidence = self._detections_confidence
             revision = self._overlay_revision
             features = self._features
             features_pending = self._features_pending
@@ -1027,6 +1097,9 @@ class PoseFlyGUI:
                     for item in features]
         now = time.monotonic()
         if detections_model is not None and detections_model != self.drone_model_var.get():
+            detections, features, captured_at = [], [], None
+        if detections_confidence is not None and detections_confidence != self._confidence:
+            # An in-flight result from older thresholds must not reappear.
             detections, features, captured_at = [], [], None
         new_frame = frame is not None
         if new_frame:
@@ -1106,6 +1179,9 @@ class PoseFlyGUI:
         if self._fps_after_id:
             self.root.after_cancel(self._fps_after_id)
             self._fps_after_id = None
+        if self._confidence_after_id:
+            self.root.after_cancel(self._confidence_after_id)
+            self._confidence_after_id = None
         self._wait_for_shutdown()
 
     def _wait_for_shutdown(self):

@@ -68,14 +68,15 @@ works after moving the whole project directory. `PoseFly.desktop` is retained
 for desktop environments that support desktop entries; its paths are specific
 to this installation.
 
-The launcher registers `posefly.desktop` and the bundled icon in your user's
-application/icon directories under `${XDG_DATA_HOME:-$HOME/.local/share}`.
-The window class and desktop entry both identify **PoseFly**, allowing Linux
-taskbars to match the app to its icon. Registration is refreshed after a move;
-it can also be run manually with `python3 linux/install_desktop.py`.
+Launch from the project folder; PoseFly stays out of the GNOME application menu.
+The launcher registers a **hidden** `posefly.desktop` (`NoDisplay=true`) and the
+bundled icon under `${XDG_DATA_HOME:-$HOME/.local/share}` solely for taskbar icon
+matching. The window class and hidden desktop entry both identify **PoseFly**.
+Registration is refreshed after a move; `python3 linux/install_desktop.py` also
+updates an existing installation to hide its menu entry.
 No administrator access is needed. This follows the
 [desktop entry specification](https://specifications.freedesktop.org/desktop-entry/latest-single/)
-for `Icon` and `StartupWMClass`.
+for `Icon`, `StartupWMClass` and `NoDisplay`.
 
 The launcher works from any directory. It chooses `POSEFLY_PYTHON` when set,
 then an activated virtual environment, then the repository's `.venv`, then
@@ -108,10 +109,20 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   The previous custom-attention drone checkpoint is no longer the default.
   Switching profiles loads each checkpoint once and reuses it.
   After detecting a drone, enabled angle, distance, LED-ID and speed models run
-  on that drone's unmodified crop. They do not run on the background when no
-  drone is detected. All five toggles are enabled initially; disable individual
+  on that drone's crop with the internal preprocessing described below. They do
+  not run on the background when no drone is detected. All five toggles are
+  enabled initially; disable individual
   features to reduce inference work. Turning off Drone pauses feature models too.
   Models load on demand and are reused across sessions.
+- In **Detection → Minimum confidence (%)**, set a separate threshold for
+  Drone, Angle, Distance, LED ID and Speed. Enter 0–100%; arrows, Enter, leaving
+  the field, or **Apply thresholds** apply the settings live. Typed changes also
+  apply after a short pause. Higher thresholds reject more predictions; feature
+  estimates below their threshold show **N/A**. Results from older settings are
+  hidden while the next inference completes. Invalid input keeps the last valid
+  thresholds. **Reset defaults** restores Drone to 10% and each feature model
+  to 0.1%, matching the previous behavior. Settings last for the current app
+  session; changing them does not restart the camera or change exposure.
 - Camera capture runs separately from detection. The live preview draws recent
   drone boxes as soon as the detector returns, before feature-model loading or
   inference finishes. The latest confirmed boxes remain visible until a new

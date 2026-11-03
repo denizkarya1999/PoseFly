@@ -2,6 +2,7 @@ from pathlib import Path
 import numpy as np
 import cv2
 from ultralytics import YOLO
+from machinelearning.confidence import DEFAULT_CONFIDENCE
 import sys
 
 import pathlib, os
@@ -32,7 +33,7 @@ class DroneDetector:
             raise FileNotFoundError(f"Drone model not found: {model_path}")
         self.model = YOLO(model_path)
 
-    def detect(self, frame, conf_threshold=0.1, iou=0.7, return_preprocessed=False):
+    def detect(self, frame, conf_threshold=DEFAULT_CONFIDENCE["drone"], iou=0.7, return_preprocessed=False):
         if (not isinstance(frame, np.ndarray) or frame.ndim != 3
                 or frame.shape[2] != 3 or frame.size == 0 or frame.dtype != np.uint8):
             raise ValueError("Drone detection requires a nonempty uint8 BGR image.")
