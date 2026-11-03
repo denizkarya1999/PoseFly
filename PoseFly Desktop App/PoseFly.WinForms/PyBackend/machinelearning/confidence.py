@@ -9,7 +9,7 @@ MODEL_LABELS = {
     "led": "LED ID",
     "speed": "Speed",
 }
-DEFAULT_CONFIDENCE = {"drone": 0.1, "angle": 0.001, "distance": 0.001, "led": 0.001, "speed": 0.001}
+DEFAULT_CONFIDENCE = {"drone": 0.25, "angle": 0.001, "distance": 0.001, "led": 0.001, "speed": 0.001}
 
 
 def confidence_thresholds(values=None):

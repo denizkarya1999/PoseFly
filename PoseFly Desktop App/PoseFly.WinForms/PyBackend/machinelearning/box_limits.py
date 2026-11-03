@@ -5,8 +5,8 @@ import math
 from machinelearning.confidence import MODEL_LABELS
 
 MAX_BOX_LIMIT = 300
-# Preserve Ultralytics' previous drone default and the feature top-1 defaults.
-DEFAULT_MAX_BOXES = {"drone": 300, "angle": 1, "distance": 1, "led": 1, "speed": 1}
+# Start with one drone and one candidate per feature; users can raise each limit.
+DEFAULT_MAX_BOXES = {"drone": 1, "angle": 1, "distance": 1, "led": 1, "speed": 1}
 
 
 def parse_box_limit(value):

@@ -64,9 +64,8 @@ cc -O2 -Wall -Wextra -Werror linux/launcher.c -o PoseFly
 ```
 
 The executable resolves the project relative to its own location, so it also
-works after moving the whole project directory. `PoseFly.desktop` is retained
-for desktop environments that support desktop entries; its paths are specific
-to this installation.
+works after moving the whole project directory. Use **PoseFly** to launch from
+the folder; there is no separate `PoseFly.desktop` file in the project.
 
 Launch from the project folder; PoseFly stays out of the GNOME application menu.
 The launcher registers a **hidden** `posefly.desktop` (`NoDisplay=true`) and the
@@ -120,8 +119,8 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   apply after a short pause. Higher thresholds reject more predictions; feature
   estimates below their threshold show **N/A**. Results from older settings are
   hidden while the next inference completes. Invalid input keeps the last valid
-  thresholds. **Reset defaults** restores Drone to 10% and each feature model
-  to 0.1%, matching the previous behavior. Settings last for the current app
+  thresholds. **Reset defaults** restores Drone to 25% and each feature model
+  to 0.1%. Settings last for the current app
   session; changing them does not restart the camera or change exposure.
 - **Max boxes** beside each confidence field sets a whole-number maximum from
   1 to 300. The Drone limit applies to the full frame and caps the drone boxes
@@ -130,7 +129,7 @@ Run in a graphical desktop session; Tk needs X11 or XWayland (`DISPLAY`).
   and the strongest estimate is shown for that feature. Counts are maximums,
   not a request to invent detections: confidence filtering may return fewer.
   Changes apply live, with old results hidden until updated inference returns.
-  **Reset defaults** restores 300 drone boxes and one box per feature model,
+  **Reset defaults** restores one drone box and one box per feature model,
   together with the default confidence thresholds. Counts last for this session.
 - Camera capture runs separately from detection. The live preview draws recent
   drone boxes as soon as the detector returns, before feature-model loading or
